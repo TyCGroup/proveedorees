@@ -50,7 +50,7 @@ body {
 }
 
 .header .container {
-    padding: 1.5rem 20px;
+    padding: 0.3rem 20px;
 }
 
 .logo-container {
@@ -786,7 +786,7 @@ body {
     background: var(--accent-color);
 }
 .logo-image {
-    height: 40px;
+    height: 80px;
     width: auto;
     margin-right: 10px;
 }
