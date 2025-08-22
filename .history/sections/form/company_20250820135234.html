@@ -1,0 +1,107 @@
+<!-- Form Section - Company Information Step -->
+<section id="form-section" class="section active">
+    <div class="container">
+        <div class="form-card">
+            <!-- Progress Component -->
+            <div id="progress-container"></div>
+            
+            <!-- Company Information Step -->
+            <div class="form-step active" id="company-step">
+                <h3>Información de la Empresa</h3>
+                
+                <!-- Nota de Campos Precargados -->
+                <div class="preloaded-fields-note">
+                    <div class="preloaded-note-header">
+                        <i class="fas fa-info-circle"></i>
+                        <strong>Nota para la parte de datos cargados automáticamente:</strong>
+                    </div>
+                    <div class="preloaded-note-content">
+                        <h4>Campos precargados</h4>
+                        <p>Los siguientes campos se han extraído de los documentos previamente validados.</p>
+                        <p>Únicamente podrá modificar el campo correspondiente al nombre comercial.</p>
+                    </div>
+                </div>
+                
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="nombre-comercial">Nombre Comercial de la Empresa</label>
+                        <input type="text" id="nombre-comercial" name="nombre-comercial" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="razon-social">Razón Social</label>
+                        <input type="text" id="razon-social" name="razon-social" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="rfc">R.F.C.</label>
+                        <input type="text" id="rfc" name="rfc" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="tipo-persona">Tipo Persona Jurídica</label>
+                        <input type="text" id="tipo-persona" name="tipo-persona" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="calle">Domicilio Fiscal: Calle</label>
+                        <input type="text" id="calle" name="calle" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="numero">No.</label>
+                        <input type="text" id="numero" name="numero" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="colonia">Colonia</label>
+                        <input type="text" id="colonia" name="colonia" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="ciudad">Ciudad</label>
+                        <input type="text" id="ciudad" name="ciudad" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="estado">Estado</label>
+                        <input type="text" id="estado" name="estado" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="cp">C.P.</label>
+                        <input type="text" id="cp" name="cp" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="pais">País</label>
+                        <input type="text" id="pais" name="pais" value="México" readonly>
+                    </div>
+                </div>
+                
+                <div class="form-actions">
+                    <button class="btn btn-secondary" onclick="showFormStep('documents')">
+                        <i class="fas fa-arrow-left"></i> Regresar
+                    </button>
+                    <button class="btn btn-primary" onclick="showFormStep('banking')">
+                        Siguiente: Información Bancaria <i class="fas fa-arrow-right"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<script>
+    // Load progress component and fill form when this step loads
+    if (window.pageLoader) {
+        window.pageLoader.loadComponent('progress', 'progress-container').then(() => {
+            // Update progress for company step
+            if (window.formHandler) {
+                window.formHandler.updateProgress(66, 'Paso 2 de 3: Información de la Empresa');
+                // Fill company form with OCR data
+                window.formHandler.fillCompanyForm();
+            }
+        });
+    }
+</script>

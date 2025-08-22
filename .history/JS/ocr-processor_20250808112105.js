@@ -1,0 +1,368 @@
+// OCR Processor for Document Validation
+class OCRProcessor {
+    constructor() {
+        this.documentData = {
+            opinion: null,
+            constancia: null,
+            bancario: null
+        };
+        this.validationResults = {
+            companyNameMatch: false,
+            positiveOpinion: false,
+            dateValid: false
+        };
+    }
+
+    // Process PDF file and extract text using Tesseract
+    async processPDF(file, documentType) {
+        try {
+            // Convert PDF to images first
+            const pdf = await pdfjsLib.getDocument(URL.createObjectURL(file)).promise;
+            let fullText = '';
+
+            // Process only first page for constancia fiscal
+            const numPages = documentType === 'constancia' ? 1 : pdf.numPages;
+
+            for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+                const page = await pdf.getPage(pageNum);
+                const viewport = page.getViewport({ scale: 2.0 });
+                
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+
+                await page.render({
+                    canvasContext: context,
+                    viewport: viewport
+                }).promise;
+
+                // Convert canvas to image and process with OCR
+                const imageData = canvas.toDataURL();
+                const result = await Tesseract.recognize(imageData, 'spa', {
+                    logger: m => console.log(m)
+                });
+
+                fullText += result.data.text + '\n';
+            }
+
+            return this.processDocumentText(fullText, documentType);
+        } catch (error) {
+            console.error('Error processing PDF:', error);
+            throw new Error('Error al procesar el documento PDF');
+        }
+    }
+
+    // Process extracted text based on document type
+    processDocumentText(text, documentType) {
+        const cleanText = text.replace(/\s+/g, ' ').trim();
+        
+        switch (documentType) {
+            case 'opinion':
+                return this.processOpinionDocument(cleanText);
+            case 'constancia':
+                return this.processConstanciaDocument(cleanText);
+            case 'bancario':
+                return this.processBancarioDocument(cleanText);
+            default:
+                throw new Error('Tipo de documento no reconocido');
+        }
+    }
+
+    // Process Opinión de Cumplimiento document
+    processOpinionDocument(text) {
+        const data = {};
+
+        // Extract company name
+        const companyNameRegex = /Nombre,\s*denominación\s*o\s*razón\s*social\s*([A-ZÀ-ÿ\s\d\.,-]+)\s*Sentido/i;
+        const companyMatch = text.match(companyNameRegex);
+        if (companyMatch) {
+            data.companyName = companyMatch[1].trim();
+        }
+
+        // Extract sentiment (POSITIVA/NEGATIVO)
+        if (text.includes('POSITIVO')) {
+            data.sentiment = 'POSITIVO';
+        } else if (text.includes('NEGATIVO')) {
+            data.sentiment = 'NEGATIVO';
+        }
+        const sentimentMatch = text.match(sentimentRegex);
+        if (sentimentMatch) {
+            data.sentiment = sentimentMatch[1].trim().toUpperCase();
+        }
+
+        // Extract emission date
+        const dateRegex = /(\d{1,2})\s*de\s*([a-z]+)\s*de\s*(\d{4})/i;
+        const dateMatch = text.match(dateRegex);
+        if (dateMatch) {
+            data.emissionDate = this.parseSpanishDate(dateMatch[0]);
+        }
+
+        this.documentData.opinion = data;
+        return data;
+    }
+
+    // Process Constancia de Situación Fiscal document
+    processConstanciaDocument(text) {
+        const data = {};
+
+        // Extract company name (Denominación/Razón Social)
+        const companyNameRegex = /Denominación\/Razón\s*Social:\s*([A-ZÀ-ÿ\s\d\.,-]+)/i;
+        const companyMatch = text.match(companyNameRegex);
+        if (companyMatch) {
+            data.companyName = companyMatch[1].trim();
+        }
+
+        // Extract RFC
+        const rfcRegex = /RFC:\s*([A-Z0-9]{10,13})/i;
+        const rfcMatch = text.match(rfcRegex);
+        if (rfcMatch) {
+            data.rfc = rfcMatch[1].trim();
+        }
+
+        // Extract address information
+        const addressFields = {
+            street: /Nombre\s*de\s*Vialidad:\s*([A-ZÀ-ÿ\s\d\.,-]+)/i,
+            number: /Número\s*Exterior:\s*([A-ZÀ-ÿ\s\d\.,-]+)/i,
+            colony: /Nombre\s*de\s*la\s*Colonia:\s*([A-ZÀ-ÿ\s\d\.,-]+)/i,
+            city: /Nombre\s*del\s*Municipio\s*o\s*Demarcación\s*Territorial:\s*([A-ZÀ-ÿ\s\d\.,-]+)/i,
+            state: /Nombre\s*de\s*la\s*Entidad\s*Federativa:\s*([A-ZÀ-ÿ\s\d\.,-]+)/i,
+            postalCode: /Código\s*Postal:\s*([0-9]{5})/i
+        };
+
+        Object.keys(addressFields).forEach(field => {
+            const match = text.match(addressFields[field]);
+            if (match) {
+                data[field] = match[1].trim();
+            }
+        });
+
+        // Extract emission date
+        const dateRegex = /(\d{1,2})\s*DE\s*([A-Z]+)\s*DE\s*(\d{4})/i;
+        const dateMatch = text.match(dateRegex);
+        if (dateMatch) {
+            data.emissionDate = this.parseSpanishDate(dateMatch[0]);
+        }
+
+        this.documentData.constancia = data;
+        return data;
+    }
+
+    // Process bank statement document
+    processBancarioDocument(text) {
+        const data = {};
+
+        // Extract company name (multiple possible patterns)
+        const companyPatterns = [
+            /Nombre,\s*denominación\s*o\s*razón\s*social\s*Sentido\s*([A-ZÀ-ÿ\s\d\.,-]+)\s*POSITIVO/i,
+            /Nombre,\s*denominación\s*o\s*razón\s*social\s*([A-ZÀ-ÿ\s\d\.,-]+)\s*POSITIVO/i,
+            /([A-ZÀ-ÿ\s\d\.,-]+)\s*SA\s*DE\s*CV\s*POSITIVO/i
+        ];
+
+        let companyMatch = null;
+        for (const pattern of companyPatterns) {
+            companyMatch = text.match(pattern);
+            if (companyMatch) {
+                data.companyName = companyMatch[1].trim();
+                break;
+            }
+        }
+
+        for (const pattern of companyPatterns) {
+            const match = text.match(pattern);
+            if (match) {
+                data.companyName = match[1].trim();
+                break;
+            }
+        }
+
+        this.documentData.bancario = data;
+        return data;
+    }
+
+    // Parse Spanish date format
+    parseSpanishDate(dateString) {
+        const months = {
+            'enero': 0, 'febrero': 1, 'marzo': 2, 'abril': 3,
+            'mayo': 4, 'junio': 5, 'julio': 6, 'agosto': 7,
+            'septiembre': 8, 'octubre': 9, 'noviembre': 10, 'diciembre': 11
+        };
+
+        const regex = /(\d{1,2})\s*de\s*([a-z]+)\s*de\s*(\d{4})/i;
+        const match = dateString.match(regex);
+        
+        if (match) {
+            const day = parseInt(match[1]);
+            const monthName = match[2].toLowerCase();
+            const year = parseInt(match[3]);
+            const month = months[monthName];
+            
+            if (month !== undefined) {
+                return new Date(year, month, day);
+            }
+        }
+        
+        return null;
+    }
+
+    // Validate all documents
+    validateDocuments() {
+        const results = {
+            companyNameMatch: this.validateCompanyNames(),
+            positiveOpinion: this.validatePositiveOpinion(),
+            dateValid: this.validateEmissionDate(),
+            errors: []
+        };
+
+        // Check for missing data
+        if (!this.documentData.opinion) {
+            results.errors.push('Falta procesar la Opinión de Cumplimiento');
+        }
+        if (!this.documentData.constancia) {
+            results.errors.push('Falta procesar la Constancia de Situación Fiscal');
+        }
+        if (!this.documentData.bancario) {
+            results.errors.push('Falta procesar el Estado de Cuenta Bancario');
+        }
+
+        this.validationResults = results;
+        return results;
+    }
+
+    // Validate that company names match across documents
+    validateCompanyNames() {
+        const { opinion, constancia, bancario } = this.documentData;
+        
+        if (!opinion?.companyName || !constancia?.companyName || !bancario?.companyName) {
+            return false;
+        }
+
+        // Normalize company names for comparison
+        const normalize = (name) => {
+            return name.toUpperCase()
+                .replace(/\s+/g, ' ')
+                .replace(/[.,]/g, '')
+                .replace(/\bSA\b|\bDE\b|\bCV\b/g, '')
+                .trim();
+        };
+
+        const normalizedOpinion = normalize(opinion.companyName);
+        const normalizedConstancia = normalize(constancia.companyName);
+        const normalizedBancario = normalize(bancario.companyName);
+
+        // Check if all names contain similar core elements
+        const similarity = this.calculateStringSimilarity;
+        
+        return (
+            similarity(normalizedOpinion, normalizedConstancia) > 0.8 &&
+            similarity(normalizedConstancia, normalizedBancario) > 0.8
+        );
+    }
+
+    // Validate that opinion document is positive
+    validatePositiveOpinion() {
+        return this.documentData.opinion?.sentiment === 'POSITIVA';
+    }
+
+    // Validate that emission date is within 30 days
+    validateEmissionDate() {
+        const constanciaDate = this.documentData.constancia?.emissionDate;
+        
+        if (!constanciaDate) {
+            return false;
+        }
+
+        const today = new Date();
+        const daysDifference = (today - constanciaDate) / (1000 * 60 * 60 * 24);
+        
+        return daysDifference >= 0 && daysDifference <= 30;
+    }
+
+    // Calculate string similarity using Levenshtein distance
+    calculateStringSimilarity(str1, str2) {
+        const longer = str1.length > str2.length ? str1 : str2;
+        const shorter = str1.length > str2.length ? str2 : str1;
+        
+        if (longer.length === 0) {
+            return 1.0;
+        }
+        
+        const distance = this.levenshteinDistance(longer, shorter);
+        return (longer.length - distance) / longer.length;
+    }
+
+    // Levenshtein distance algorithm
+    levenshteinDistance(str1, str2) {
+        const matrix = [];
+        
+        for (let i = 0; i <= str2.length; i++) {
+            matrix[i] = [i];
+        }
+        
+        for (let j = 0; j <= str1.length; j++) {
+            matrix[0][j] = j;
+        }
+        
+        for (let i = 1; i <= str2.length; i++) {
+            for (let j = 1; j <= str1.length; j++) {
+                if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+                    matrix[i][j] = matrix[i - 1][j - 1];
+                } else {
+                    matrix[i][j] = Math.min(
+                        matrix[i - 1][j - 1] + 1,
+                        matrix[i][j - 1] + 1,
+                        matrix[i - 1][j] + 1
+                    );
+                }
+            }
+        }
+        
+        return matrix[str2.length][str1.length];
+    }
+
+    // Get extracted company information for form filling
+    getCompanyInfo() {
+        const constancia = this.documentData.constancia;
+        
+        if (!constancia) {
+            return {};
+        }
+
+        // Determine person type based on RFC length
+        const getPersonType = (rfc) => {
+            if (!rfc) return '';
+            return rfc.length === 13 ? 'PERSONA FÍSICA' : 'PERSONA MORAL';
+        };
+
+        return {
+            nombreComercial: constancia.companyName || '',
+            razonSocial: constancia.companyName || '',
+            rfc: constancia.rfc || '',
+            tipoPersona: getPersonType(constancia.rfc),
+            calle: constancia.street || '',
+            numero: constancia.number || '',
+            colonia: constancia.colony || '',
+            ciudad: constancia.city || '',
+            estado: constancia.state || '',
+            cp: constancia.postalCode || '',
+            pais: 'México'
+        };
+    }
+
+    // Reset processor state
+    reset() {
+        this.documentData = {
+            opinion: null,
+            constancia: null,
+            bancario: null
+        };
+        this.validationResults = {
+            companyNameMatch: false,
+            positiveOpinion: false,
+            dateValid: false
+        };
+    }
+}
+
+// Create global instance
+window.ocrProcessor = new OCRProcessor();
