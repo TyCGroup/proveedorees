@@ -947,8 +947,8 @@ class FormHandler {
         formCard.innerHTML = `
             <div class="success-message">
                 <i class="fas fa-check-circle" style="font-size: 3rem; margin-bottom: 1rem;"></i>
-                <h2>¡Registro Exitoso!</h2>
-                <p>Su solicitud de registro como proveedor ha sido enviada correctamente.</p>
+                <h2>¡Pre-registro Exitoso!</h2>
+                <p>Su solicitud de pre-registro como proveedor ha sido enviada correctamente y sera validad por el área de compras.</p>
                 <p>Recibirá una notificación por correo electrónico sobre el estado de su solicitud.</p>
                 <button class="btn btn-primary" onclick="location.reload()">
                     Realizar Otro Registro
