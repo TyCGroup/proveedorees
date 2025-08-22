@@ -1,0 +1,25 @@
+# VS Code / historiales
+.history/
+.vscode/
+
+# Node / builds
+node_modules/
+dist/
+build/
+.cache/
+out/
+.next/
+
+# Entornos
+.env
+.env.*
+firebase-debug.log
+
+# SO
+.DS_Store
+Thumbs.db
+
+# Logs
+npm-debug.log*
+yarn-*.log*
+pnpm-*.log*
