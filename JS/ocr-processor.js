@@ -294,110 +294,146 @@ class OCRProcessor {
         return null;
     }
 
-    // CORREGIDO: Método para extraer fecha de emisión - Buscar específicamente después de "Cadena Original Sello:"
-    extractEmissionDate(text, data) {
-        console.log('=== PROCESANDO CONSTANCIA FISCAL - FECHA ===');
-        console.log('Buscando "Cadena Original Sello:" en el texto...');
-        
-        // PATRÓN PRINCIPAL: Buscar específicamente después de "Cadena Original Sello:"
-        const cadenaOriginalPattern = /Cadena\s+Original\s+Sello:\s*\|\|(\d{4}\/\d{2}\/\d{2})\|/i;
-        const cadenaMatch = text.match(cadenaOriginalPattern);
-        
-        if (cadenaMatch && cadenaMatch[1]) {
-            const fechaStr = cadenaMatch[1]; // Ejemplo: "2025/08/04"
-            console.log(`✅ ENCONTRADO después de "Cadena Original Sello:": ${fechaStr}`);
-            
-            // Parsear la fecha
-            const [year, month, day] = fechaStr.split('/').map(num => parseInt(num));
-            
-            // Crear fecha
-            const fechaEncontrada = new Date(year, month - 1, day);
-            data.emissionDate = fechaEncontrada;
-            console.log(`✅ Fecha extraída de Cadena Original Sello: ${day}/${month}/${year}`);
-            
-            // Verificar que sea una fecha razonable
-            const currentYear = new Date().getFullYear();
-            if (year >= currentYear - 2 && year <= currentYear + 1) {
-                console.log(`✅ Fecha válida (año ${year} está en rango)`);
-            } else {
-                console.log(`⚠️ Fecha fuera del rango esperado (año ${year}), pero se usará de todas formas`);
-            }
-            
+    // DEBUG: Método para extraer fecha de emisión con debug completo
+// DEBUG/ROBUSTA: Extraer fecha de emisión desde "Cadena Original Sello"
+// - Acepta ||YYYY/MM/DD| o ||YYYY/MM/DD|| (una o dos barras finales)
+// - Acepta / o - como separador de fecha
+// - Normaliza espacios raros del OCR entre pipes
+// - Si no encuentra patrón, elige la fecha 20xx más cercana a "cadena/sello"
+extractEmissionDate(text, data) {
+    console.log('=== PROCESANDO CONSTANCIA FISCAL - FECHA ===');
+    console.log('Buscando "Cadena Original Sello:" en el texto...');
+
+    // 0) Normalización ligera por si el OCR mete espacios entre pipes y la fecha
+    //    Ej: "|  | 2025/08/04 | |" -> "||2025/08/04||"
+    text = text.replace(/\|\s*\|\s*(20\d{2}[\/\-]\d{2}[\/\-]\d{2})\s*\|\s*\|/g, '||$1||');
+
+    // Para debug: listar líneas con "cadena" o "sello"
+    const lines = text.split('\n');
+    const cadenaLines = lines.filter(line =>
+        line.toLowerCase().includes('cadena') ||
+        line.toLowerCase().includes('sello')
+    );
+    if (cadenaLines.length > 0) {
+        console.log('🔍 LÍNEAS con "cadena" o "sello" encontradas:');
+        cadenaLines.forEach((line, i) => console.log(`  ${i + 1}: "${line.trim()}"`));
+    } else {
+        console.log('❌ No se encontraron líneas con "cadena" o "sello"');
+    }
+
+    // 1) Patrón principal (más permisivo)
+    const cadenaOriginalPattern =
+        /Cadena\s*Original\s*Sello\s*[:：]?\s*\|{2}\s*(\d{4}[\/\-]\d{2}[\/\-]\d{2})\s*\|{1,2}/i;
+
+    // 2) Alternativos (igualmente permisivos)
+    const patronesAlternativos = [
+        /Cadena.*?Original.*?Sello\s*[:：]?\s*\|{2}\s*(\d{4}[\/\-]\d{2}[\/\-]\d{2})\s*\|{1,2}/i,
+        /Cadena.*?Sello\s*[:：]?\s*\|{2}\s*(\d{4}[\/\-]\d{2}[\/\-]\d{2})\s*\|{1,2}/i,
+        /Original.*?Sello\s*[:：]?\s*\|{2}\s*(\d{4}[\/\-]\d{2}[\/\-]\d{2})\s*\|{1,2}/i,
+        /Sello\s*[:：]?\s*\|{2}\s*(\d{4}[\/\-]\d{2}[\/\-]\d{2})\s*\|{1,2}/i,
+        /Cadena[\s\w]*[:：]?\s*\|{2}\s*(\d{4}[\/\-]\d{2}[\/\-]\d{2})\s*\|{1,2}/i,
+    ];
+
+    // 3) Intento con patrón principal
+    let match = text.match(cadenaOriginalPattern);
+    if (match && match[1]) {
+        const fechaStr = match[1];
+        const [year, month, day] = fechaStr.split(/[\/\-]/).map(n => parseInt(n, 10));
+        data.emissionDate = new Date(year, month - 1, day);
+        console.log(`✅ Fecha extraída de Cadena Original Sello: ${day}/${month}/${year}`);
+        return;
+    }
+    console.log('❌ No se encontró "Cadena Original Sello:" con fecha, intentando patrones alternativos...');
+
+    // 4) Intento con alternativos
+    for (let i = 0; i < patronesAlternativos.length; i++) {
+        const m = text.match(patronesAlternativos[i]);
+        if (m && m[1]) {
+            const fechaStr = m[1];
+            const [year, month, day] = fechaStr.split(/[\/\-]/).map(n => parseInt(n, 10));
+            data.emissionDate = new Date(year, month - 1, day);
+            console.log(`✅ Fecha extraída (patrón alternativo ${i + 1}): ${day}/${month}/${year}`);
             return;
         }
-        
-        console.log('❌ No se encontró "Cadena Original Sello:" con fecha, intentando patrones alternativos...');
-        
-        // PATRONES ALTERNATIVOS (en caso de OCR con errores)
-        const patronesAlternativos = [
-            /Cadena.*?Sello:\s*\|\|(\d{4}\/\d{2}\/\d{2})\|/i,       // Con variaciones en espacios
-            /Cadena\s*Original.*?:\s*\|\|(\d{4}\/\d{2}\/\d{2})\|/i, // Con variaciones
-            /Sello:\s*\|\|(\d{4}\/\d{2}\/\d{2})\|/i,                // Solo "Sello:"
-        ];
-        
-        for (let i = 0; i < patronesAlternativos.length; i++) {
-            const match = text.match(patronesAlternativos[i]);
-            if (match && match[1]) {
-                const fechaStr = match[1];
-                console.log(`✅ ENCONTRADO con patrón alternativo ${i + 1}: ${fechaStr}`);
-                
-                const [year, month, day] = fechaStr.split('/').map(num => parseInt(num));
-                const fechaEncontrada = new Date(year, month - 1, day);
-                data.emissionDate = fechaEncontrada;
-                console.log(`✅ Fecha extraída (patrón alternativo): ${day}/${month}/${year}`);
+    }
+
+    console.log('❌ No se encontró cadena original, buscando fechas y eligiendo por cercanía a "cadena/sello"...');
+
+    // 5) Elegir la fecha 20xx más cercana a cualquier aparición de "cadena" o "sello"
+    const lower = text.toLowerCase();
+    const anchors = [...lower.matchAll(/cadena|sello/g)].map(m => m.index);
+    const fechaRegexGlobal = /(20\d{2}[\/\-]\d{2}[\/\-]\d{2})/g;
+    const fechas = [...text.matchAll(fechaRegexGlobal)].map(m => ({ str: m[0], idx: m.index }));
+
+    if (fechas.length > 0) {
+        // Si no hay anchors, como último recurso usa la primera (comportamiento previo)
+        if (anchors.length === 0) {
+            const [y, m, d] = fechas[0].str.split(/[\/\-]/).map(n => parseInt(n, 10));
+            data.emissionDate = new Date(y, m - 1, d);
+            console.log(`⚠️ Sin anchors. Usando primera fecha encontrada: ${d}/${m}/${y}`);
+            return;
+        }
+
+        // Hay anchors: escoger la fecha con menor distancia a cualquier anchor
+        const best = fechas.reduce((b, f) => {
+            const dist = Math.min(...anchors.map(a => Math.abs(a - f.idx)));
+            return (!b || dist < b.dist) ? { ...f, dist } : b;
+        }, null);
+
+        const [yy, mm, dd] = best.str.split(/[\/\-]/).map(n => parseInt(n, 10));
+        data.emissionDate = new Date(yy, mm - 1, dd);
+        console.log(`✅ Fecha elegida por cercanía a "cadena/sello": ${dd}/${mm}/${yy} (dist=${best.dist})`);
+        return;
+    }
+
+    console.log('❌ No se encontraron fechas numéricas (YYYY/MM/DD). Intentando fechas en español...');
+    // 6) Fallback español (prioriza 2025, luego cualquiera)
+    const spanishDateRegex = /(\d{1,2})\s*de\s*([a-záéíóúñ]+)\s*de\s*(\d{4})/gi;
+    const spanishMatches = [...text.matchAll(spanishDateRegex)];
+
+    const parseSpanish = (dateString) => {
+        const months = {
+            'enero': 0, 'febrero': 1, 'marzo': 2, 'abril': 3,
+            'mayo': 4, 'junio': 5, 'julio': 6, 'agosto': 7,
+            'septiembre': 8, 'setiembre': 8, 'octubre': 9,
+            'noviembre': 10, 'diciembre': 11
+        };
+        const clean = dateString.replace(/\n\s*/g, ' ').replace(/\s+/g, ' ').trim();
+        const m = clean.match(/(\d{1,2})\s*de\s*([a-záéíóúñ]+)\s*de\s*(\d{4})/i);
+        if (!m) return null;
+        const day = parseInt(m[1], 10);
+        const monthName = m[2].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const year = parseInt(m[3], 10);
+        const month = months[monthName];
+        if (month === undefined) return null;
+        return new Date(year, month, day);
+    };
+
+    // Prioriza 2025
+    for (const sm of spanishMatches) {
+        const year = parseInt(sm[3], 10);
+        if (year === 2025) {
+            const d = parseSpanish(sm[0]);
+            if (d) {
+                data.emissionDate = d;
+                console.log(`✅ Fecha 2025 extraída en español: ${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`);
                 return;
             }
         }
-        
-        console.log('❌ No se encontró cadena original, buscando cualquier fecha de 2025...');
-        
-        // ÚLTIMO RECURSO: Buscar cualquier fecha de 2025 en formato YYYY/MM/DD
-        const fecha2025Pattern = /(2025\/\d{2}\/\d{2})/g;
-        const fechas2025 = [...text.matchAll(fecha2025Pattern)];
-        
-        if (fechas2025.length > 0) {
-            const fechaStr = fechas2025[0][1];
-            console.log(`✅ ENCONTRADA fecha 2025: ${fechaStr}`);
-            
-            const [year, month, day] = fechaStr.split('/').map(num => parseInt(num));
-            const fechaEncontrada = new Date(year, month - 1, day);
-            data.emissionDate = fechaEncontrada;
-            console.log(`✅ Fecha 2025 extraída (último recurso): ${day}/${month}/${year}`);
+    }
+    // Si no hubo 2025, toma la primera española válida
+    for (const sm of spanishMatches) {
+        const d = parseSpanish(sm[0]);
+        if (d) {
+            data.emissionDate = d;
+            console.log(`⚠️ Fecha extraída como último recurso (español): ${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`);
             return;
         }
-        
-        console.log('❌ Intentando fallback con fechas en español...');
-        
-        // FALLBACK: Buscar fechas en formato texto español, priorizando 2025
-        const spanishDateRegex = /(\d{1,2})\s*de\s*([a-záéíóúñ]+)\s*de\s*(\d{4})/gi;
-        const spanishMatches = [...text.matchAll(spanishDateRegex)];
-        
-        // Priorizar fechas de 2025 en español
-        for (const match of spanishMatches) {
-            const year = parseInt(match[3]);
-            if (year === 2025) {
-                const parsedDate = this.parseSpanishDate(match[0]);
-                if (parsedDate) {
-                    data.emissionDate = parsedDate;
-                    console.log(`✅ Fecha 2025 extraída en español: ${match[0]}`);
-                    return;
-                }
-            }
-        }
-        
-        // Como último recurso, usar cualquier fecha española encontrada
-        if (spanishMatches.length > 0) {
-            const parsedDate = this.parseSpanishDate(spanishMatches[0][0]);
-            if (parsedDate) {
-                data.emissionDate = parsedDate;
-                console.log(`⚠️ Fecha extraída como último recurso: ${spanishMatches[0][0]}`);
-            } else {
-                console.log('❌ No se pudo extraer ninguna fecha válida');
-            }
-        } else {
-            console.log('❌ No se encontraron fechas en el documento');
-        }
     }
+
+    console.log('❌ No se pudo extraer ninguna fecha válida');
+}
+
 
     // ========================================
     // BANKING VALIDATION METHODS
