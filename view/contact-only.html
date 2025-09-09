@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Datos de Contacto - T&C Group</title>
+    <link rel="stylesheet" href="../CSS/styless.css">
+    <link rel="stylesheet" href="../CSS/contact-only.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="logo-container">
+                <img src="../T&C-Group_Logos_Logo - T&C-Group-07.png" alt="T&C Group Logo" class="logo-image">
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <section class="section active">
+            <div class="container">
+                <div class="contact-only-card">
+                    <div class="contact-only-header">
+                        <div class="warning-notice">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <h2>Documentos Requieren Revisión Manual</h2>
+                            <p>Los documentos subidos necesitan una validación adicional por parte de nuestro equipo. Para continuar con el proceso, por favor complete la siguiente información de contacto.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="contact-only-content">
+                        <form id="contact-only-form" class="contact-only-form">
+                            <div class="form-section">
+                                <h3>Información Básica de la Empresa</h3>
+                                
+                                <div class="form-group">
+                                    <label for="company-name">
+                                        Nombre de la Empresa
+                                        <span class="required-asterisk">*</span>
+                                    </label>
+                                    <input type="text" id="company-name" name="company-name" required 
+                                           placeholder="Ingrese el nombre comercial de su empresa"
+                                           maxlength="100">
+                                    <small class="field-help">Nombre comercial o razón social de su empresa</small>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <h3>Datos del Contacto Principal</h3>
+                                
+                                <div class="form-group">
+                                    <label for="contact-name">
+                                        Nombre del Contacto
+                                        <span class="required-asterisk">*</span>
+                                    </label>
+                                    <input type="text" id="contact-name" name="contact-name" required 
+                                           placeholder="Nombre completo de la persona de contacto"
+                                           maxlength="80">
+                                    <small class="field-help">Persona responsable de las comunicaciones con T&C Group</small>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="contact-phone">
+                                        Teléfono del Contacto
+                                        <span class="required-asterisk">*</span>
+                                    </label>
+                                    <input type="tel" id="contact-phone" name="contact-phone" required 
+                                           placeholder="55 1234 5678"
+                                           maxlength="15">
+                                    <small class="field-help">Número telefónico donde podemos contactarle directamente</small>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="contact-email">
+                                        Email del Contacto
+                                        <span class="required-asterisk">*</span>
+                                    </label>
+                                    <input type="email" id="contact-email" name="contact-email" required 
+                                           placeholder="contacto@empresa.com">
+                                    <small class="field-help">Correo electrónico para comunicaciones oficiales</small>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <h3>Documentos Subidos</h3>
+                                <div class="documents-summary" id="documents-summary">
+                                    <!-- Los documentos se cargarán dinámicamente aquí -->
+                                </div>
+                                <p class="documents-note">
+                                    <i class="fas fa-info-circle"></i>
+                                    Los documentos subidos anteriormente se incluirán en la solicitud para revisión manual por parte de nuestro equipo.
+                                </p>
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="button" class="btn btn-secondary" onclick="goBackToDocuments()">
+                                    <i class="fas fa-arrow-left"></i> Regresar a Documentos
+                                </button>
+                                <button type="submit" class="btn btn-primary" id="submit-contact-btn">
+                                    <i class="fas fa-paper-plane"></i> Enviar Datos para Revisión
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="loading-content">
+            <div class="loader"></div>
+            <p>Enviando información...</p>
+            <small>Por favor espere, no cierre esta ventana</small>
+        </div>
+    </div>
+
+    <!-- Success Message -->
+    <div class="success-overlay" id="success-overlay" style="display: none;">
+        <div class="success-content">
+            <div class="success-icon">
+                <i class="fas fa-check-circle"></i>
+            </div>
+            <h2>¡Información Enviada Correctamente!</h2>
+            <p>Su solicitud ha sido enviada para revisión manual por parte de nuestro equipo de compras.</p>
+            <p><strong>Recibirá una respuesta en un plazo de 3-5 días hábiles.</strong></p>
+            <div class="success-details">
+                <p><strong>¿Qué sigue?</strong></p>
+                <ul>
+                    <li>Nuestro equipo revisará manualmente sus documentos</li>
+                    <li>Validaremos la información proporcionada</li>
+                    <li>Le notificaremos el resultado por correo electrónico</li>
+                    <li>Si es aprobado, continuaremos con el proceso completo de registro</li>
+                </ul>
+            </div>
+            <button class="btn btn-primary" onclick="goBackToDocuments()">
+                <i class="fas fa-home"></i> Volver al Inicio
+            </button>
+        </div>
+    </div>
+
+    <!-- Firebase SDK Scripts -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+
+    <!-- Firebase Config -->
+    <script src="../firebase-config.js"></script>
+
+    <!-- Application Scripts -->
+    <script src="../JS/contact-only-handler.js"></script>
+</body>
+</html>

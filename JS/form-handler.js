@@ -1,4 +1,4 @@
-// Form Handler for Supplier Registration
+// Form Handler for Supplier Registration - VERSIÓN COMPLETA CON REVISIÓN MANUAL
 class FormHandler {
     constructor() {
         this.uploadedFiles = {
@@ -11,7 +11,7 @@ class FormHandler {
             constancia: false,
             bancario: false,
             banking: false,
-            commercial: false  // FALTA ESTO
+            commercial: false
         };
         this.currentStep = 'documents';
         this.bankingData = {
@@ -28,6 +28,7 @@ class FormHandler {
             bic: '',
             convenioCie: ''
         };
+        this.isManualReviewFlow = false; // NUEVO: Flag para flujo de revisión manual
         this.initializeEventListeners();
     }
 
@@ -46,9 +47,6 @@ class FormHandler {
                 fileInput.addEventListener('change', (e) => this.handleFileUpload(type, e.target));
             }
         });
-
-        // Banking form listeners will be setup when banking step is shown
-        // Don't call setupBankingListeners() here as elements don't exist yet
     }
 
     // Setup banking form event listeners (called when banking step is shown)
@@ -66,7 +64,6 @@ class FormHandler {
                 input.removeEventListener('input', this.handleBankingInput);
                 input.removeEventListener('blur', this.validateBankingData);
                 
-                // En setupBankingListeners - AGREGAR VALIDACIÓN PARA TELÉFONO
                 if (fieldId === 'numero-cuenta' || fieldId === 'clabe') {
                     // Special handling for main banking fields
                     if (fieldId === 'clabe') {
@@ -78,7 +75,7 @@ class FormHandler {
                 } else if (fieldId === 'telefono-cobranza') {
                     // Special handling for required phone field
                     input.addEventListener('input', this.handleGeneralBankingInput.bind(this));
-                    input.addEventListener('blur', this.validateBankingForm.bind(this)); // USAR validateBankingForm en lugar de validateBankingData
+                    input.addEventListener('blur', this.validateBankingForm.bind(this));
                 } else {
                     // Standard handling for other fields
                     input.addEventListener('input', this.handleGeneralBankingInput.bind(this));
@@ -174,13 +171,11 @@ class FormHandler {
         if (input.id === 'numero-cuenta') {
             // Limit to 20 characters for account number
             value = value.slice(0, 20);
-            this.bankingData.numeroCuenta = value; // USAR LA PROPIEDAD CORRECTA
+            this.bankingData.numeroCuenta = value;
         }
         
         input.value = value;
     }
-
-    
 
     // Handle CLABE input with formatting
     handleClabeInput(event) {
@@ -191,7 +186,7 @@ class FormHandler {
         value = value.slice(0, 18);
         
         input.value = value;
-        this.bankingData.clabe = value; // ESTO YA ESTÁ CORRECTO
+        this.bankingData.clabe = value;
         
         // Visual feedback for CLABE format
         const isValid = value.length === 18;
@@ -325,7 +320,7 @@ class FormHandler {
         }
     }
 
-    // Enable banking next button (ACTUALIZADO)
+    // Enable banking next button
     enableBankingNextButton() {
         const nextBtn = document.getElementById('banking-next-btn');
         if (nextBtn) {
@@ -333,7 +328,7 @@ class FormHandler {
         }
     }
 
-    // Disable banking next button (ACTUALIZADO)
+    // Disable banking next button
     disableBankingNextButton() {
         const nextBtn = document.getElementById('banking-next-btn');
         if (nextBtn) {
@@ -341,7 +336,7 @@ class FormHandler {
         }
     }
 
-    // Legacy methods for compatibility (ACTUALIZADOS)
+    // Legacy methods for compatibility
     enableFinishButton() {
         this.enableBankingNextButton();
     }
@@ -580,7 +575,9 @@ class FormHandler {
         }
     }
 
-    // Check overall validation
+    // ========================================
+    // MODIFICADO: Check overall validation con flujo de revisión manual
+    // ========================================
     checkOverallValidation() {
         const hasRequiredFiles = this.uploadedFiles.opinion && 
                                 this.uploadedFiles.constancia && 
@@ -600,6 +597,7 @@ class FormHandler {
                 
                 this.showOverallValidation('success', 'Todos los documentos son válidos. Puede continuar al siguiente paso.');
                 this.enableNextStep();
+                this.switchToNormalFlow(); // NUEVO: Asegurar flujo normal
                 
             } else {
                 const errors = [];
@@ -614,11 +612,236 @@ class FormHandler {
                 }
                 
                 this.showOverallValidation('error', `Errores encontrados: ${errors.join('. ')}`);
-                this.disableNextStep();
+                this.switchToManualReviewFlow(); // NUEVO: Cambiar a flujo de revisión manual
             }
+        } else if (hasRequiredFiles) {
+            // Hay archivos pero algunos fallaron validación individual
+            this.switchToManualReviewFlow(); // NUEVO: Cambiar a flujo de revisión manual
         } else {
             this.disableNextStep();
+            this.switchToNormalFlow(); // NUEVO: Mantener flujo normal si faltan archivos
         }
+    }
+
+    // ========================================
+    // NUEVO: Cambiar a flujo de revisión manual
+    // ========================================
+    switchToManualReviewFlow() {
+        console.log('Cambiando a flujo de revisión manual...');
+        this.isManualReviewFlow = true;
+        
+        const nextBtn = document.getElementById('next-step-btn');
+        if (nextBtn) {
+            // Cambiar texto y funcionalidad del botón
+            nextBtn.innerHTML = '<i class="fas fa-user"></i> Datos de Contacto';
+            nextBtn.disabled = false;
+            nextBtn.onclick = this.redirectToContactOnly.bind(this);
+            
+            // Agregar clase visual para diferenciar
+            nextBtn.classList.add('manual-review-btn');
+            nextBtn.classList.remove('btn-primary');
+            nextBtn.classList.add('btn-warning');
+        }
+        
+        // Mostrar mensaje explicativo
+        this.showManualReviewMessage();
+        
+        // Guardar estado en sessionStorage para el formulario de contacto
+        this.saveStateForContactOnly();
+    }
+
+    // ========================================
+    // NUEVO: Cambiar a flujo normal
+    // ========================================
+    switchToNormalFlow() {
+        console.log('Usando flujo normal de registro...');
+        this.isManualReviewFlow = false;
+        
+        const nextBtn = document.getElementById('next-step-btn');
+        if (nextBtn) {
+            // Restaurar texto y funcionalidad original
+            nextBtn.innerHTML = 'Siguiente: Información de la Empresa <i class="fas fa-arrow-right"></i>';
+            nextBtn.onclick = () => this.showCompanyInfo();
+            
+            // Restaurar clases visuales
+            nextBtn.classList.remove('manual-review-btn', 'btn-warning');
+            nextBtn.classList.add('btn-primary');
+        }
+        
+        // Ocultar mensaje de revisión manual si existe
+        this.hideManualReviewMessage();
+    }
+
+    // ========================================
+    // NUEVO: Mostrar mensaje de revisión manual
+    // ========================================
+    showManualReviewMessage() {
+        // Remover mensaje existente si hay uno
+        this.hideManualReviewMessage();
+        
+        const overallDiv = document.getElementById('overall-validation');
+        if (overallDiv) {
+            const messageDiv = document.createElement('div');
+            messageDiv.id = 'manual-review-message';
+            messageDiv.className = 'manual-review-notice';
+            messageDiv.innerHTML = `
+                <div class="manual-review-content">
+                    <i class="fas fa-user-check"></i>
+                    <div class="manual-review-text">
+                        <h4>Revisión Manual Requerida</h4>
+                        <p>Los documentos necesitan validación adicional por parte de nuestro equipo. Complete los datos de contacto para continuar con el proceso de revisión manual.</p>
+                    </div>
+                </div>
+            `;
+            
+            // Agregar estilos si no existen
+            this.addManualReviewStyles();
+            
+            // Insertar después del overall-validation
+            overallDiv.parentNode.insertBefore(messageDiv, overallDiv.nextSibling);
+        }
+    }
+
+    // ========================================
+    // NUEVO: Ocultar mensaje de revisión manual
+    // ========================================
+    hideManualReviewMessage() {
+        const existingMessage = document.getElementById('manual-review-message');
+        if (existingMessage) {
+            existingMessage.remove();
+        }
+    }
+
+    // ========================================
+    // NUEVO: Agregar estilos para mensaje de revisión manual
+    // ========================================
+    addManualReviewStyles() {
+        if (document.getElementById('manual-review-styles')) return;
+        
+        const styles = document.createElement('style');
+        styles.id = 'manual-review-styles';
+        styles.textContent = `
+            .manual-review-notice {
+                background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+                border: 1px solid #f59e0b;
+                border-radius: 8px;
+                padding: 1.5rem;
+                margin: 1rem 0;
+                animation: slideInDown 0.3s ease-out;
+            }
+            
+            .manual-review-content {
+                display: flex;
+                align-items: flex-start;
+                gap: 1rem;
+            }
+            
+            .manual-review-content i {
+                color: #d97706;
+                font-size: 1.5rem;
+                margin-top: 0.25rem;
+                flex-shrink: 0;
+            }
+            
+            .manual-review-text h4 {
+                margin: 0 0 0.5rem 0;
+                color: #92400e;
+                font-size: 1.1rem;
+                font-weight: 600;
+            }
+            
+            .manual-review-text p {
+                margin: 0;
+                color: #78350f;
+                line-height: 1.5;
+                font-size: 0.95rem;
+            }
+            
+            .btn-warning {
+                background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+                color: white;
+            }
+            
+            .btn-warning:hover:not(:disabled) {
+                background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+                transform: translateY(-1px);
+                box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+            }
+            
+            @keyframes slideInDown {
+                from {
+                    opacity: 0;
+                    transform: translateY(-20px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+        `;
+        document.head.appendChild(styles);
+    }
+
+    // ========================================
+    // NUEVO: Guardar estado para formulario de contacto
+    // ========================================
+async saveStateForContactOnly() {
+    try {
+        // Guardar archivos subidos CORRECTAMENTE
+        const filesToSave = {};
+        
+        console.log('Guardando archivos para contacto:', Object.keys(this.uploadedFiles));
+        
+        for (const [type, file] of Object.entries(this.uploadedFiles)) {
+            if (file && file instanceof File) {
+                console.log(`Procesando archivo ${type}:`, {
+                    name: file.name,
+                    size: file.size,
+                    type: file.type
+                });
+                
+                // Convertir File a objeto serializable
+                filesToSave[type] = await this.fileToSerializable(file);
+                
+                console.log(`Archivo ${type} convertido exitosamente`);
+            }
+        }
+        
+        // Guardar en sessionStorage
+        sessionStorage.setItem('uploadedFiles', JSON.stringify(filesToSave));
+        console.log('Archivos guardados en sessionStorage:', Object.keys(filesToSave));
+        
+        // Guardar información extraída por OCR
+        const companyInfo = window.ocrProcessor?.getCompanyInfo();
+        if (companyInfo) {
+            sessionStorage.setItem('extractedCompanyInfo', JSON.stringify(companyInfo));
+        }
+        
+        // Guardar resultados de validación para referencia
+        const validationSummary = window.ocrProcessor?.getValidationSummary();
+        if (validationSummary) {
+            sessionStorage.setItem('validationSummary', JSON.stringify(validationSummary));
+        }
+        
+        console.log('Estado guardado para formulario de contacto');
+        
+    } catch (error) {
+        console.error('Error guardando estado para contacto:', error);
+        throw error; // Re-lanzar para manejo en redirectToContactOnly
+    }
+}
+
+    // ========================================
+    // NUEVO: Redireccionar al formulario de contacto
+    // ========================================
+    redirectToContactOnly() {
+        console.log('Redirigiendo a formulario de contacto...');
+        
+        // Asegurar que el estado esté guardado
+        this.saveStateForContactOnly();
+        
+        // Redireccionar a la página de contacto
+        window.location.href = '../view/contact-only.html';
     }
 
     // Show overall validation message
@@ -631,24 +854,46 @@ class FormHandler {
         }
     }
 
-    // Enable next step
+    // ========================================
+    // MODIFICADO: Enable next step - verificar flujo
+    // ========================================
     enableNextStep() {
         const nextBtn = document.getElementById('next-step-btn');
         if (nextBtn) {
-            nextBtn.disabled = false;
+            // Solo habilitar si estamos en flujo normal
+            if (!nextBtn.classList.contains('manual-review-btn')) {
+                nextBtn.disabled = false;
+            }
         }
     }
 
-    // Disable next step
+    // ========================================
+    // MODIFICADO: Disable next step - verificar flujo
+    // ========================================
     disableNextStep() {
         const nextBtn = document.getElementById('next-step-btn');
         if (nextBtn) {
-            nextBtn.disabled = true;
+            // Solo deshabilitar si estamos en flujo normal
+            if (!nextBtn.classList.contains('manual-review-btn')) {
+                nextBtn.disabled = true;
+            }
         }
     }
 
-    // Show company information step
+    // ========================================
+    // MODIFICADO: Show company information step - agregar verificación de flujo
+    // ========================================
     showCompanyInfo() {
+        // Verificar si debe usar flujo normal o de revisión manual
+        const hasValidDocuments = this.validationStatus.opinion && 
+                                 this.validationStatus.constancia && 
+                                 this.validationStatus.bancario;
+        
+        if (!hasValidDocuments) {
+            console.log('Documentos no válidos, no se puede continuar al flujo normal');
+            return;
+        }
+        
         // Fill form with extracted data
         this.fillCompanyForm();
         
@@ -656,7 +901,7 @@ class FormHandler {
         document.getElementById('documents-step').classList.remove('active');
         document.getElementById('company-step').classList.add('active');
         
-        // Update progress - ACTUALIZADO para 4 pasos
+        // Update progress
         this.updateProgress(40, 'Paso 2 de 5: Información de la Empresa');
         
         this.currentStep = 'company';
@@ -668,7 +913,7 @@ class FormHandler {
         document.getElementById('company-step').classList.remove('active');
         document.getElementById('banking-step').classList.add('active');
         
-        // Update progress - ACTUALIZADO para 4 pasos
+        // Update progress
         this.updateProgress(60, 'Paso 3 de 5: Información Bancaria');
         
         // Setup banking listeners now that elements exist
@@ -677,7 +922,7 @@ class FormHandler {
         this.currentStep = 'banking';
     }
 
-    // Show contact information step (NUEVO)
+    // Show contact information step
     showContactInfo() {
         // Switch to contact step
         document.getElementById('banking-step').classList.remove('active');
@@ -694,7 +939,7 @@ class FormHandler {
         this.currentStep = 'contact';
     }
 
-    // AGREGAR ESTE MÉTODO:
+    // Show commercial conditions step
     showCommercialConditions() {
         // Switch to commercial step
         document.getElementById('contact-step').classList.remove('active');
@@ -711,24 +956,24 @@ class FormHandler {
         this.currentStep = 'commercial';
     }
 
-    // Show documents step - ACTUALIZADO: Lógica de navegación para 4 pasos
+    // Show documents step - lógica de navegación para 5 pasos
     showDocuments() {
         if (this.currentStep === 'company') {
             document.getElementById('company-step').classList.remove('active');
             document.getElementById('documents-step').classList.add('active');
-            this.updateProgress(20, 'Paso 1 de 5: Documentos'); // Era 25, 'Paso 1 de 4'
+            this.updateProgress(20, 'Paso 1 de 5: Documentos');
             this.currentStep = 'documents';
         } else if (this.currentStep === 'banking') {
             document.getElementById('banking-step').classList.remove('active');
             document.getElementById('company-step').classList.add('active');
-            this.updateProgress(40, 'Paso 2 de 5: Información de la Empresa'); // Era 50, 'Paso 2 de 4'
+            this.updateProgress(40, 'Paso 2 de 5: Información de la Empresa');
             this.currentStep = 'company';
         } else if (this.currentStep === 'contact') {
             document.getElementById('contact-step').classList.remove('active');
             document.getElementById('banking-step').classList.add('active');
-            this.updateProgress(60, 'Paso 3 de 5: Información Bancaria'); // Era 75, 'Paso 3 de 4'
+            this.updateProgress(60, 'Paso 3 de 5: Información Bancaria');
             this.currentStep = 'banking';
-        } else if (this.currentStep === 'commercial') { // AGREGAR ESTE BLOQUE
+        } else if (this.currentStep === 'commercial') {
             document.getElementById('commercial-step').classList.remove('active');
             document.getElementById('contact-step').classList.add('active');
             this.updateProgress(80, 'Paso 4 de 5: Datos de Contacto');
@@ -806,14 +1051,14 @@ class FormHandler {
         }
     }
 
-    // Collect form data - ACTUALIZADO para incluir datos de contacto
+    // Collect form data
     collectFormData() {
         const formData = {};
         
         // Get company form inputs
         const companyInputs = document.querySelectorAll('#company-step input');
         companyInputs.forEach(input => {
-            if (input.name && input.name.trim() !== '') {  // Verificar que name existe y no está vacío
+            if (input.name && input.name.trim() !== '') {
                 formData[input.name] = input.value || '';
             }
         });
@@ -821,7 +1066,7 @@ class FormHandler {
         // Get banking form inputs
         const bankingInputs = document.querySelectorAll('#banking-step input');
         bankingInputs.forEach(input => {
-            if (input.name && input.name.trim() !== '') {  // Verificar que name existe y no está vacío
+            if (input.name && input.name.trim() !== '') {
                 formData[input.name] = input.value || '';
             }
         });
@@ -829,7 +1074,7 @@ class FormHandler {
         // Get contact form inputs
         const contactInputs = document.querySelectorAll('#contact-step input');
         contactInputs.forEach(input => {
-            if (input.name && input.name.trim() !== '') {  // Verificar que name existe y no está vacío
+            if (input.name && input.name.trim() !== '') {
                 if (input.type === 'checkbox') {
                     if (!formData['areas']) formData['areas'] = [];
                     if (input.checked) {
@@ -844,7 +1089,7 @@ class FormHandler {
         // Get commercial form inputs
         const commercialInputs = document.querySelectorAll('#commercial-step input, #commercial-step select, #commercial-step textarea');
         commercialInputs.forEach(input => {
-            if (input.name && input.name.trim() !== '') {  // Verificar que name existe y no está vacío
+            if (input.name && input.name.trim() !== '') {
                 if (input.type === 'checkbox') {
                     if (!formData['segmentos']) formData['segmentos'] = [];
                     if (input.checked) {
@@ -901,31 +1146,58 @@ class FormHandler {
     }
 
     // Upload files to Firebase Storage
-    async uploadFilesToStorage() {
-        const storage = firebase.storage();
-        const fileUrls = {};
+async uploadFilesToStorage() {
+    const storage = firebase.storage();
+    const fileUrls = {};
+    
+    const submissionId = Date.now().toString();
+    
+    const fileNameMapping = {
+        'opinion': '32D.pdf',
+        'constancia': 'CSF.pdf', 
+        'bancario': 'EDO.CTA.pdf'
+    };
+    
+    for (const [type, file] of Object.entries(this.uploadedFiles)) {
+        if (file) {
+            const standardFileName = fileNameMapping[type] || `${type}.pdf`;
+            const storageRef = storage.ref(`suppliers/${submissionId}/${standardFileName}`);
+            
+            // AGREGAR: Especificar metadata con tipo MIME correcto
+            const metadata = {
+                contentType: 'application/pdf',
+                customMetadata: {
+                    'originalName': file.name,
+                    'uploadedAt': new Date().toISOString()
+                }
+            };
+            
+            await storageRef.put(file, metadata);
+            fileUrls[type] = await storageRef.getDownloadURL();
+        }
+    }
+    return fileUrls;
+}
+
+fileToSerializable(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
         
-        // Create unique folder for this submission
-        const submissionId = Date.now().toString();
-        
-        // Map file types to standard names
-        const fileNameMapping = {
-            'opinion': '32D.pdf',
-            'constancia': 'CSF.pdf', 
-            'bancario': 'EDO.CTA.pdf'
+        reader.onload = function(e) {
+            const serializable = {
+                name: file.name,
+                size: file.size,
+                type: file.type,
+                lastModified: file.lastModified,
+                dataURL: e.target.result
+            };
+            resolve(serializable);
         };
         
-        // Upload each file with standard name
-        for (const [type, file] of Object.entries(this.uploadedFiles)) {
-            if (file) {
-                const standardFileName = fileNameMapping[type] || `${type}.pdf`;
-                const storageRef = storage.ref(`suppliers/${submissionId}/${standardFileName}`);
-                await storageRef.put(file);
-                fileUrls[type] = await storageRef.getDownloadURL();
-            }
-        }
-        return fileUrls;
-    }
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
 
     // Save to Firestore
     async saveToFirestore(formData, fileUrls) {
@@ -1020,22 +1292,7 @@ class FormHandler {
         }
     }
 
-        preventModalClose(event) {
-        event.preventDefault();
-        event.stopPropagation();
-        return false;
-    }
-
-    // Función para prevenir cierre con tecla Escape
-    preventEscapeClose(event) {
-        if (event.key === 'Escape') {
-            event.preventDefault();
-            event.stopPropagation();
-            return false;
-        }
-    }
-
-    // Reset form - ACTUALIZADO para incluir paso de contacto
+    // Reset form
     reset() {
         this.uploadedFiles = {
             opinion: null,
@@ -1047,7 +1304,7 @@ class FormHandler {
             constancia: false,
             bancario: false,
             banking: false,
-            commercial: false  // FALTA ESTO
+            commercial: false
         };
         this.bankingData = {
             numeroCuenta: '',
@@ -1064,13 +1321,14 @@ class FormHandler {
             convenioCie: ''
         };
         this.currentStep = 'documents';
+        this.isManualReviewFlow = false; // NUEVO: Reset manual review flag
         
         // Reset OCR processor
         if (window.ocrProcessor) {
             window.ocrProcessor.reset();
         }
         
-        // Reset contact step if handler exists (NUEVO)
+        // Reset contact step if handler exists
         if (window.contactStepHandler) {
             window.contactStepHandler.clearContactForm();
         }
@@ -1079,7 +1337,7 @@ class FormHandler {
             window.commercialConditionsHandler.clearCommercialForm();
         }
         
-        // Clear forms - TODOS los campos incluyendo contacto
+        // Clear forms
         ['company-step', 'banking-step', 'contact-step', 'commercial-step'].forEach(stepId => {
             const step = document.getElementById(stepId);
             if (step) {
@@ -1094,27 +1352,37 @@ class FormHandler {
                 });
             }
         });
+
+        // Clear sessionStorage for manual review
+        try {
+            sessionStorage.removeItem('uploadedFiles');
+            sessionStorage.removeItem('extractedCompanyInfo');
+            sessionStorage.removeItem('validationSummary');
+        } catch (error) {
+            console.error('Error clearing sessionStorage:', error);
+        }
     }
 }
 
 // Create global instance
 window.formHandler = new FormHandler();
 
-// Global functions for HTML onclick events - ACTUALIZADAS
+// Global functions for HTML onclick events
 window.triggerFileUpload = (type) => window.formHandler.triggerFileUpload(type);
 window.handleFileUpload = (type, input) => window.formHandler.handleFileUpload(type, input);
 window.showCompanyInfo = () => window.formHandler.showCompanyInfo();
 window.showBankingInfo = () => window.formHandler.showBankingInfo();
-window.showContactInfo = () => window.formHandler.showContactInfo(); // NUEVO
+window.showContactInfo = () => window.formHandler.showContactInfo();
 window.showCommercialConditions = () => window.formHandler.showCommercialConditions();
 window.showDocuments = () => window.formHandler.showDocuments();
 window.submitForm = () => window.formHandler.submitForm();
 
-// CORREGIR estas funciones:
+// Funciones para navegación entre pasos con validación
 window.proceedToCommercialConditions = () => {
     if (window.contactStepHandler && !window.contactStepHandler.validateAllContactFields()) {
-        // AGREGAR mensaje de error:
-        alert('Por favor complete todos los campos requeridos del formulario de contacto.');
+        if (window.portalApp) {
+            window.portalApp.showErrorMessage('Por favor complete todos los campos requeridos del formulario de contacto.');
+        }
         return;
     }
     window.formHandler.showCommercialConditions();
@@ -1122,8 +1390,9 @@ window.proceedToCommercialConditions = () => {
 
 window.proceedToSubmissionFromCommercial = () => {
     if (window.commercialConditionsHandler && !window.commercialConditionsHandler.validateAllCommercialFields()) {
-        // AGREGAR mensaje de error:
-        alert('Por favor complete todos los campos requeridos del formulario de condiciones comerciales.');
+        if (window.portalApp) {
+            window.portalApp.showErrorMessage('Por favor complete todos los campos requeridos del formulario de condiciones comerciales.');
+        }
         return;
     }
     window.formHandler.submitForm();
