@@ -158,28 +158,11 @@
                         </div>
                         
                         <div class="documents-grid">
-                            <!-- Document 1 - Required -->
-                            <div class="document-upload required">
-                                <div class="document-header">
-                                    <h4>1. Opinión de Cumplimiento Positiva 32D</h4>
-                                    <span class="required-badge">Requerido</span>
-                                </div>
-                                <div class="upload-area" onclick="triggerFileUpload('opinion')">
-                                    <input type="file" id="opinion-file" accept=".pdf" required onchange="handleFileUpload('opinion', this)">
-                                    <div class="upload-content">
-                                        <i class="fas fa-cloud-upload-alt"></i>
-                                        <p>Clic para subir archivo PDF</p>
-                                        <small>Debe ser POSITIVA y con fecha no mayor a 30 días - Máximo 2MB</small>
-                                    </div>
-                                </div>
-                                <div class="file-info" id="opinion-info" style="display: none;"></div>
-                                <div class="validation-status" id="opinion-validation"></div>
-                            </div>
-                            
+                           
                             <!-- Document 2 - Required -->
                             <div class="document-upload required">
                                 <div class="document-header">
-                                    <h4>2. Constancia de Situación Fiscal</h4>
+                                    <h4>1. Constancia de Situación Fiscal</h4>
                                     <span class="required-badge">Requerido</span>
                                 </div>
                                 <div class="upload-area" onclick="triggerFileUpload('constancia')">
@@ -192,6 +175,24 @@
                                 </div>
                                 <div class="file-info" id="constancia-info" style="display: none;"></div>
                                 <div class="validation-status" id="constancia-validation"></div>
+                            </div>
+
+                        <!-- Document 1 - Required -->
+                            <div class="document-upload required">
+                                <div class="document-header">
+                                    <h4>2. Opinión de Cumplimiento Positiva 32D</h4>
+                                    <span class="required-badge">Requerido</span>
+                                </div>
+                                <div class="upload-area" onclick="triggerFileUpload('opinion')">
+                                    <input type="file" id="opinion-file" accept=".pdf" required onchange="handleFileUpload('opinion', this)">
+                                    <div class="upload-content">
+                                        <i class="fas fa-cloud-upload-alt"></i>
+                                        <p>Clic para subir archivo PDF</p>
+                                        <small>Debe ser POSITIVA y con fecha no mayor a 30 días - Máximo 2MB</small>
+                                    </div>
+                                </div>
+                                <div class="file-info" id="opinion-info" style="display: none;"></div>
+                                <div class="validation-status" id="opinion-validation"></div>
                             </div>
                             
                             <!-- Document 3 - Required -->
