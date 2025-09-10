@@ -208,7 +208,7 @@ body {
 }
 
 .time-estimate {
-    background: linear-gradient(135deg, var(--warning-color) 0%, #FCD34D 100%);
+    background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
     color: var(--white);
     padding: 1rem;
     border-radius: var(--border-radius);
@@ -220,7 +220,7 @@ body {
 }
 
 .requirements {
-    background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
+    background: linear-gradient(135deg, var(--warning-color) 0%, #FCD34D 100%);
     color: var(--white);
     padding: 1.5rem;
     border-radius: var(--border-radius);
@@ -229,7 +229,7 @@ body {
 
 .requirements p {
     color: var(--white) !important;
-    font-size: 1.2rem; /* Agrega esta línea */
+    font-size: 1.4rem; /* Agrega esta línea */
     line-height: 1.6; /* Opcional: ajusta el interlineado */
 }
 
