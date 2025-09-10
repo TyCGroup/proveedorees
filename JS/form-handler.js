@@ -1222,8 +1222,8 @@ fileToSerializable(file) {
                 <h2>¡Pre-registro Exitoso!</h2>
                 <p>Su solicitud de pre-registro como proveedor ha sido enviada correctamente y sera validada por el área de compras.</p>
                 <p>Recibirá una notificación por correo electrónico sobre el estado de su solicitud.</p>
-                <button class="btn btn-primary" onclick="location.reload()">
-                    Realizar Otro Registro
+                <button class="btn btn-primary" onclick="window.open('https://www.tycgroup.com', '_blank')">
+                    Visitar página T&C Group
                 </button>
             </div>
         `;

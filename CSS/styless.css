@@ -229,6 +229,8 @@ body {
 
 .requirements p {
     color: var(--white) !important;
+    font-size: 1.2rem; /* Agrega esta línea */
+    line-height: 1.6; /* Opcional: ajusta el interlineado */
 }
 
 .declaration-checkbox {
