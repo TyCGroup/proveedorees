@@ -5,6 +5,9 @@ class GeographicCoverageHandler {
         this.states = [];
         this.municipalitiesByState = {};
         this.isLoading = false;
+        this.maxRetries = 3;
+        this.retryDelay = 1000;
+        this.fullMexicoData = null; // Datos completos de México.json
     }
 
     // Initialize the geographic coverage component
@@ -13,19 +16,90 @@ class GeographicCoverageHandler {
         this.setupEventListeners();
     }
 
-    // Load Mexican states from INEGI API
+    // Load Mexican states from Mexico.json with CORS proxies
     async loadStates() {
+        const alternativeUrls = [
+            // URL directa (a veces funciona)
+            'https://raw.githubusercontent.com/carlosascari/Mexico.json/master/México.json',
+            // Proxies CORS gratuitos
+            'https://api.allorigins.win/raw?url=' + encodeURIComponent('https://raw.githubusercontent.com/carlosascari/Mexico.json/master/México.json'),
+            'https://corsproxy.io/?' + encodeURIComponent('https://raw.githubusercontent.com/carlosascari/Mexico.json/master/México.json'),
+            'https://cors-anywhere.herokuapp.com/https://raw.githubusercontent.com/carlosascari/Mexico.json/master/México.json',
+            // URL sin acento por si acaso
+            'https://raw.githubusercontent.com/carlosascari/Mexico.json/master/Mexico.json',
+        ];
+
+        for (let i = 0; i < alternativeUrls.length; i++) {
+            const url = alternativeUrls[i];
+            try {
+                console.log(`Intentando URL ${i + 1}/${alternativeUrls.length}: ${url.substring(0, 50)}...`);
+                
+                const response = await this.fetchWithRetry(url, 0); // Sin reintentos internos para ser más rápido
+                
+                if (response && Array.isArray(response)) {
+                    // Guardar datos completos para usar después
+                    this.fullMexicoData = response;
+                    
+                    // Extraer solo los estados para el dropdown
+                    this.states = response.map(estado => ({
+                        cve_ent: estado.clave.padStart(2, '0'),
+                        nomgeo: estado.nombre
+                    }));
+                    
+                    console.log(`✅ Estados cargados exitosamente desde URL ${i + 1}: ${this.states.length} estados`);
+                    this.populateStateSelect();
+                    return; // ¡Éxito! Salir del loop
+                } else {
+                    throw new Error('Estructura de datos inválida');
+                }
+            } catch (error) {
+                console.warn(`❌ Falló URL ${i + 1}: ${error.message}`);
+                
+                // Si es la última URL y falló, mostrar error
+                if (i === alternativeUrls.length - 1) {
+                    console.error('❌ Todas las URLs fallaron');
+                    this.showErrorMessage('No se pudieron cargar los datos geográficos desde ninguna fuente disponible. Por favor, intente más tarde.');
+                    
+                    // Limpiar el estado
+                    this.states = [];
+                    this.fullMexicoData = null;
+                }
+            }
+        }
+        
+        this.populateStateSelect();
+    }
+
+    // Fetch con reintentos y manejo CORS mejorado
+    async fetchWithRetry(url, retries = 2) {
         try {
-            this.isLoading = true;
-            const response = await fetch('https://gaia.inegi.org.mx/wscatgeo/v2/mgee/');
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos timeout
+
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json',
+                },
+                signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
             const data = await response.json();
-            this.states = data.datos || [];
-            this.populateStateSelect();
+            return data;
         } catch (error) {
-            console.error('Error loading states:', error);
-            this.showFallbackStates();
-        } finally {
-            this.isLoading = false;
+            if (retries > 0) {
+                console.log(`Reintentando... (${retries} intentos restantes)`);
+                await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+                return this.fetchWithRetry(url, retries - 1);
+            }
+            
+            throw error;
         }
     }
 
@@ -36,31 +110,74 @@ class GeographicCoverageHandler {
 
         stateSelect.innerHTML = '<option value="">Seleccione un estado</option>';
         
+        if (this.states.length === 0) {
+            stateSelect.innerHTML += '<option value="" disabled>Error al cargar estados</option>';
+            stateSelect.disabled = true;
+            return;
+        }
+
         this.states.forEach(state => {
             const option = document.createElement('option');
             option.value = state.cve_ent;
-            option.textContent = state.nomgeo; // Cambiado de nom_ent a nomgeo
+            option.textContent = state.nomgeo;
             stateSelect.appendChild(option);
         });
+        
+        stateSelect.disabled = false;
     }
 
-    // Load municipalities for selected state
+    // Load municipalities for selected state from Mexico.json data
     async loadMunicipalities(stateCode) {
+        // Si ya los tenemos cargados, usar esos
         if (this.municipalitiesByState[stateCode]) {
             this.populateCitySelect(stateCode);
             return;
         }
 
+        // Si no tenemos datos completos, mostrar error
+        if (!this.fullMexicoData) {
+            this.showCityError();
+            return;
+        }
+
         try {
             this.showCityLoading();
-            const response = await fetch(`https://gaia.inegi.org.mx/wscatgeo/v2/mgem/${stateCode}`);
-            const data = await response.json();
-            this.municipalitiesByState[stateCode] = data.datos || [];
+            
+            // Buscar el estado en los datos completos
+            const estado = this.fullMexicoData.find(e => e.clave.padStart(2, '0') === stateCode);
+            
+            if (!estado) {
+                throw new Error(`Estado con código ${stateCode} no encontrado`);
+            }
+
+            if (!estado.municipios || estado.municipios.length === 0) {
+                throw new Error(`No hay municipios disponibles para ${estado.nombre}`);
+            }
+
+            // Convertir municipios al formato esperado
+            this.municipalitiesByState[stateCode] = estado.municipios.map(municipio => ({
+                cve_mun: this.extractMunicipalityCode(municipio.clave),
+                nomgeo: municipio.nombre,
+                clave_completa: municipio.clave // Guardar clave completa por si la necesitamos
+            }));
+
+            console.log(`Municipios cargados para ${estado.nombre}: ${this.municipalitiesByState[stateCode].length}`);
             this.populateCitySelect(stateCode);
+            
         } catch (error) {
             console.error('Error loading municipalities:', error);
             this.showCityError();
         }
+    }
+
+    // Extraer código de municipio de la clave completa (últimos 3 dígitos)
+    extractMunicipalityCode(claveCompleta) {
+        // La clave viene como string, extraer los últimos 3 dígitos
+        const clave = claveCompleta.toString();
+        if (clave.length >= 3) {
+            return clave.slice(-3);
+        }
+        return clave.padStart(3, '0');
     }
 
     // Populate city select dropdown
@@ -68,24 +185,32 @@ class GeographicCoverageHandler {
         const citySelect = document.getElementById('city-select');
         if (!citySelect) return;
 
-        citySelect.innerHTML = '<option value="">Seleccione una ciudad/municipio</option>';
-        citySelect.disabled = false;
-        
         const municipalities = this.municipalitiesByState[stateCode] || [];
+        
+        citySelect.innerHTML = '<option value="">Seleccione una ciudad/municipio</option>';
+        
+        if (municipalities.length === 0) {
+            citySelect.innerHTML += '<option value="" disabled>No hay municipios disponibles</option>';
+            citySelect.disabled = true;
+            return;
+        }
+
         municipalities.forEach(municipality => {
             const option = document.createElement('option');
             option.value = municipality.cve_mun;
-            option.textContent = municipality.nomgeo; // Ahora sabemos que siempre es nomgeo
+            option.textContent = municipality.nomgeo;
             option.dataset.stateName = this.getStateName(stateCode);
             option.dataset.stateCode = stateCode;
             citySelect.appendChild(option);
         });
+        
+        citySelect.disabled = false;
     }
 
     // Get state name by code
     getStateName(stateCode) {
         const state = this.states.find(s => s.cve_ent === stateCode);
-        return state ? state.nomgeo : ''; // Cambiado de nom_ent a nomgeo
+        return state ? state.nomgeo : '';
     }
 
     // Setup event listeners
@@ -267,7 +392,7 @@ class GeographicCoverageHandler {
     showCityLoading() {
         const citySelect = document.getElementById('city-select');
         if (citySelect) {
-            citySelect.innerHTML = '<option value="">Cargando ciudades...</option>';
+            citySelect.innerHTML = '<option value="">Cargando municipios...</option>';
             citySelect.disabled = true;
         }
     }
@@ -276,27 +401,43 @@ class GeographicCoverageHandler {
     showCityError() {
         const citySelect = document.getElementById('city-select');
         if (citySelect) {
-            citySelect.innerHTML = '<option value="">Error al cargar ciudades</option>';
+            citySelect.innerHTML = '<option value="">Error: No se pudieron cargar los municipios</option>';
             citySelect.disabled = true;
         }
     }
 
-    // Show message to user
-    showMessage(text, type = 'info') {
-        // You can implement a toast/notification system here
-        console.log(`${type.toUpperCase()}: ${text}`);
+    // Show error message to user
+    showErrorMessage(message) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'error-message';
+        messageDiv.innerHTML = `
+            <i class="fas fa-exclamation-triangle"></i>
+            ${message}
+        `;
+        messageDiv.style.cssText = `
+            position: fixed; top: 20px; right: 20px; z-index: 1000;
+            padding: 15px; border-radius: 4px; color: white;
+            background-color: #e74c3c; max-width: 300px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        `;
+        
+        document.body.appendChild(messageDiv);
+        setTimeout(() => messageDiv.remove(), 5000);
     }
 
-    // Fallback states if API fails
-    showFallbackStates() {
-        this.states = [
-            { cve_ent: '09', nomgeo: 'Ciudad de México' },
-            { cve_ent: '15', nomgeo: 'México' },
-            { cve_ent: '14', nomgeo: 'Jalisco' },
-            { cve_ent: '19', nomgeo: 'Nuevo León' },
-            { cve_ent: '23', nomgeo: 'Quintana Roo' }
-        ];
-        this.populateStateSelect();
+    // Show message to user
+    showMessage(text, type = 'info') {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${type}`;
+        messageDiv.textContent = text;
+        messageDiv.style.cssText = `
+            position: fixed; top: 20px; right: 20px; z-index: 1000;
+            padding: 10px 15px; border-radius: 4px; color: white;
+            background-color: ${type === 'warning' ? '#f39c12' : type === 'error' ? '#e74c3c' : '#3498db'};
+        `;
+        
+        document.body.appendChild(messageDiv);
+        setTimeout(() => messageDiv.remove(), 3000);
     }
 
     // Get selected coverage data
@@ -315,6 +456,16 @@ class GeographicCoverageHandler {
         this.resetSelectors();
         this.updateHiddenInput();
         this.validateCoverage();
+    }
+
+    // Get available municipalities for a state (utility method)
+    getMunicipalitiesForState(stateCode) {
+        return this.municipalitiesByState[stateCode] || [];
+    }
+
+    // Check if data is loaded
+    isDataLoaded() {
+        return this.fullMexicoData !== null && this.states.length > 0;
     }
 }
 
