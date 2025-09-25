@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "compras-tyc"
+  },
+  "targets": {
+    "compras-tyc": {
+      "hosting": {
+        "main": [
+          "tycproveedores.com"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

@@ -1,0 +1,234 @@
+/* Geographic Coverage Styles */
+.geographic-selectors {
+    margin-bottom: 1.5rem;
+}
+
+.selector-row {
+    display: flex;
+    gap: 1rem;
+    align-items: end;
+    flex-wrap: wrap;
+}
+
+.selector-group {
+    flex: 1;
+    min-width: 200px;
+}
+
+.selector-label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #374151;
+    margin-bottom: 0.5rem;
+}
+
+.state-selector,
+.city-selector {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    background: white;
+    transition: all 0.2s ease;
+}
+
+.state-selector:focus,
+.city-selector:focus {
+    outline: none;
+    border-color: #0ea5e9;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
+}
+
+.state-selector:disabled,
+.city-selector:disabled {
+    background-color: #f3f4f6;
+    color: #6b7280;
+    cursor: not-allowed;
+}
+
+.add-location-btn {
+    padding: 0.75rem 1.5rem;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    min-height: 48px;
+}
+
+.add-location-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.add-location-btn:disabled {
+    background: #9ca3af;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.selected-locations-container {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-top: 1rem;
+}
+
+.selected-locations-container h5 {
+    margin: 0 0 1rem 0;
+    color: #1e293b;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.selected-locations {
+    max-height: 300px;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+}
+
+.no-locations {
+    color: #6b7280;
+    font-style: italic;
+    text-align: center;
+    padding: 1rem;
+    margin: 0;
+}
+
+.location-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    transition: all 0.2s ease;
+}
+
+.location-item:hover {
+    border-color: #0ea5e9;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.location-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: 1;
+}
+
+.location-info i {
+    color: #0ea5e9;
+    font-size: 1rem;
+}
+
+.location-name {
+    font-weight: 500;
+    color: #1e293b;
+}
+
+.remove-location-btn {
+    background: #ef4444;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.remove-location-btn:hover {
+    background: #dc2626;
+    transform: scale(1.05);
+}
+
+.clear-all-btn {
+    background: #6b7280;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.clear-all-btn:hover {
+    background: #4b5563;
+}
+
+.validation-message.error {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #ef4444;
+    font-size: 0.875rem;
+    margin-top: 0.5rem;
+    padding: 0.75rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 6px;
+}
+
+.validation-message.error i {
+    color: #ef4444;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .selector-row {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+    
+    .selector-group {
+        min-width: auto;
+    }
+    
+    .add-location-btn {
+        width: 100%;
+    }
+    
+    .selected-locations-container {
+        padding: 1rem;
+    }
+    
+    .location-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.75rem;
+    }
+    
+    .location-info {
+        width: 100%;
+    }
+    
+    .remove-location-btn {
+        align-self: flex-end;
+    }
+}
+
+@media (max-width: 480px) {
+    .selector-row {
+        gap: 0.5rem;
+    }
+    
+    .selected-locations-container {
+        padding: 0.75rem;
+        margin: 0 -0.5rem;
+    }
+}
