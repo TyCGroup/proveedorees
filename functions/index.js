@@ -5,6 +5,10 @@ const {logger} = require("firebase-functions");
 const admin = require("firebase-admin");
 const nodemailer = require("nodemailer");
 
+const axios = require("axios");
+const cheerio = require("cheerio");
+const { URL } = require("url");
+
 admin.initializeApp();
 
 // Función para crear transporter dinámicamente
@@ -1334,79 +1338,83 @@ function generateManualReviewSupplierTemplate(data) {
     </html>
   `;
 }
+// --- Validación estricta de URL del SAT ---
+const OFFICIAL_HOST = "siat.sat.gob.mx";
+const OFFICIAL_PATH_RE = /^\/app\/qr\/faces\/pages\/mobile\/validadorqr\.jsf$/i;
 
-// functions/satExtract.js
-const axios = require("axios");
-const cheerio = require("cheerio");
-const { URL } = require("url");
-
-// Validador oficial del SAT
-const URL_ALLOW = /^https:\/\/siat\.sat\.gob\.mx\/app\/qr\/faces\/pages\/mobile\/validadorqr\.jsf/i;
-
-// Utils
-const norm = (s) => (s || "").replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
-const getParam = (u, k) => { try { return new URL(u).searchParams.get(k) || ""; } catch (e) { return ""; } };
-
-// Extrae “||YYYY/MM/DD HH:mm:ss|” de un string (D3 o HTML)
-function extractFechaCadena(str) {
-  if (!str) return null;
-  const dec = decodeURIComponent(str);
-  const m = dec.match(/\|\|(\d{4}[/-]\d{2}[/-]\d{2})(?:\s+(\d{2}:\d{2}:\d{2}))?/);
-  if (m) {
-    const fecha = `${m[1].replace(/-/g, "/")}${m[2] ? " " + m[2] : ""}`;
-    return { cadena: dec, fecha_cadena: fecha };
+function isOfficialSatUrl(u) {
+  try {
+    const { protocol, hostname, pathname } = new URL(u);
+    return protocol === "https:" &&
+           hostname.toLowerCase() === OFFICIAL_HOST &&
+           OFFICIAL_PATH_RE.test(pathname);
+  } catch (error) {
+    return false;
   }
-  // Variante en el HTML: “Cadena Original: ||YYYY/MM/DD HH:mm:ss|...”
-  const m2 = dec.match(/Cadena\s+Original\s*:?\s*\|\|(\d{4}[/-]\d{2}[/-]\d{2}\s+\d{2}:\d{2}:\d{2})\|/i);
-  return m2 ? { cadena: dec, fecha_cadena: m2[1] } : null;
 }
 
-function getAfter(text, label) {
-  // Captura el valor hasta la siguiente “Etiqueta:” o fin
-  const re = new RegExp(`${label}\\s*:?\\s*([\\s\\S]*?)\\s*(?=[A-ZÁÉÍÓÚÑ].{0,40}:|$)`, "i");
-  const m = text.match(re);
-  return m ? norm(m[1]) : "";
+function normalizeRFC(rfc) {
+  return (rfc || "").toUpperCase().replace(/\s+/g, "");
 }
 
-// ---- Parsers “tradicionales” ----
+const norm = (s) => (s || "").replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
+const getParam = (u, k) => { try { return new URL(u).searchParams.get(k) || ""; } catch (error) { return ""; } };
+
+// ------------------------------------
+// Parsers
+// ------------------------------------
 function parseOpinionText(text) {
-  return {
-    tipo: "opinion",
-    folio: getAfter(text, "Folio"),
-    rfc: getAfter(text, "RFC"),
-    fecha: getAfter(text, "Fecha"),
-    sentido: getAfter(text, "Sentido"),
-  };
+  const out = { tipo: "opinion" };
+
+  // RFC (formato oficial)
+  let m = text.match(/RFC\s*:?\s*([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})/i);
+  out.rfc = m ? m[1].toUpperCase() : "";
+
+  // Folio
+  m = text.match(/Folio\s*:?\s*([A-Z0-9-]+)/i);
+  out.folio = m ? m[1] : "";
+
+  // Fecha (DD-MM-YYYY o DD/MM/YYYY)
+ m = text.match(/Fecha\s*:?\s*(\d{2}[/-]\d{2}[/-]\d{4})/i);
+  out.fecha = m ? m[1] : "";
+ 
+  // Sentido (Positivo/Negativo)
+  m = text.match(/Sentido\s*:?\s*(Positivo|Negativo)/i);
+  out.sentido = m ? m[1] : "";
+
+  return out;
 }
 
 function parseCSFText(text) {
-  const razon_social     = getAfter(text, "Denominación o Razón Social") || getAfter(text, "Denominación / Razón Social") || getAfter(text, "Razón social") || "";
-  const regimen_capital  = getAfter(text, "Régimen de capital");
-  const fecha_const      = getAfter(text, "Fecha de constitución");
-  const inicio_op        = getAfter(text, "Fecha de Inicio de operaciones");
-  const situacion        = getAfter(text, "Situación del contribuyente");
-  const fecha_ult_cambio = getAfter(text, "Fecha del último cambio de situación");
-  const entidad          = getAfter(text, "Entidad Federativa");
-  const municipio        = getAfter(text, "Municipio o delegación") || getAfter(text, "Municipio o Delegación");
-  const colonia          = getAfter(text, "Colonia");
-  const tipo_vialidad    = getAfter(text, "Tipo de vialidad");
-  const vialidad_nombre  = getAfter(text, "Nombre de la vialidad");
-  const numero_ext       = getAfter(text, "Número exterior");
-  const numero_int       = getAfter(text, "Número interior");
-  const cp               = getAfter(text, "CP") || getAfter(text, "C.P.");
-  const correo           = getAfter(text, "Correo electrónico") || getAfter(text, "Correo electronico");
-  const regimen          = getAfter(text, "Régimen") || getAfter(text, "Regimen");
-  const fecha_alta       = getAfter(text, "Fecha de alta");
-  const rfcLine          = getAfter(text, "El RFC:");
+  const getAfter = (label) => {
+    const re = new RegExp(`${label}\\s*:?\\s*([\\s\\S]*?)\\s*(?=[A-ZÁÉÍÓÚÑ].{0,40}:|$)`, "i");
+    const m = text.match(re);
+    return m ? norm(m[1]) : "";
+  };
+  const razon_social     = getAfter("Denominación o Razón Social") || getAfter("Denominación / Razón Social") || getAfter("Razón social") || "";
+  const regimen_capital  = getAfter("Régimen de capital");
+  const fecha_const      = getAfter("Fecha de constitución");
+  const inicio_op        = getAfter("Fecha de Inicio de operaciones");
+  const situacion        = getAfter("Situación del contribuyente");
+  const fecha_ult_cambio = getAfter("Fecha del último cambio de situación");
+  const entidad          = getAfter("Entidad Federativa");
+  const municipio        = getAfter("Municipio o delegación") || getAfter("Municipio o Delegación");
+  const colonia          = getAfter("Colonia");
+  const tipo_vialidad    = getAfter("Tipo de vialidad");
+  const vialidad_nombre  = getAfter("Nombre de la vialidad");
+  const numero_ext       = getAfter("Número exterior");
+  const numero_int       = getAfter("Número interior");
+  const cp               = getAfter("CP") || getAfter("C.P.");
+  const correo           = getAfter("Correo electrónico") || getAfter("Correo electronico");
+  const regimen          = getAfter("Régimen") || getAfter("Regimen");
+  const fecha_alta       = getAfter("Fecha de alta");
+  const rfcLine          = getAfter("El RFC:");
 
   const domicilio_completo = norm([
     tipo_vialidad, vialidad_nombre, numero_ext,
     numero_int ? ("Int " + numero_int) : "",
     colonia, municipio, entidad, cp ? ("CP " + cp) : "",
   ].filter(Boolean).join(" "));
-
-  // También intentamos detectar fecha de “Cadena Original” en el mismo body
-  const fechaCadena = extractFechaCadena(text);
 
   return {
     tipo: "csf",
@@ -1422,19 +1430,17 @@ function parseCSFText(text) {
     numero_exterior: numero_ext, numero_interior: numero_int,
     cp, correo, regimen, fecha_alta,
     domicilio_completo,
-    // si encontramos “Cadena”
-    fecha_cadena: fechaCadena ? fechaCadena.fecha_cadena : null,
   };
 }
 
-// Intenta parsear todo lo posible solo con el querystring
+// --- QR (D3) ---
 function tryParseFromQuery(url) {
   const d1 = getParam(url, "D1");
   const d3 = getParam(url, "D3") || "";
 
-  // Opinión 32D
   if (d1 === "1") {
-    const m = d3.match(/^([^_]+)_([A-Z0-9]{12,13})_([^_]+)_([A-Z])$/i);
+    // <FOLIO>_<RFC>_<YYYYMMDD[HHmmss]>_<P|N>
+    const m = d3.match(/^([^_]+)_([A-Z0-9&Ñ]{12,13})_([0-9]{8,14})_([A-Z])$/i);
     if (m) {
       const folio   = m[1];
       const rfc     = m[2];
@@ -1444,40 +1450,64 @@ function tryParseFromQuery(url) {
     }
   }
 
-  // CSF: algunos QR (D1=0 o D1=26) traen literalmente la Cadena en D3
-  if (d1 === "0" || d1 === "26" || d1 === "10") {
-    const cad = extractFechaCadena(d3);
-    if (cad) {
-      return { tipo: "csf", fecha_cadena: cad.fecha_cadena, cadena: cad.cadena };
-    }
-    // D1=10 a veces trae solo IDCIF_RFC
-    if (d1 === "10") {
-      const m = d3.match(/^[^_]+_([A-Z0-9]{12,13})$/i);
-      if (m) return { tipo: "csf", rfc: m[1] };
-    }
+  if (d1 === "10") {
+    const m = d3.match(/^[^_]+_([A-Z0-9&Ñ]{12,13})$/i);
+    if (m) return { tipo: "csf", rfc: m[1] };
   }
 
   return null;
 }
 
-// Decide parser por D1, pero SIEMPRE regresamos también el blob/html
 function parseByD1(url, text) {
   const d1 = getParam(url, "D1");
   if (d1 === "1")  return parseOpinionText(text);
-  if (d1 === "10") return parseCSFText(text);
-  if (d1 === "26" || d1 === "0") {
-    return parseCSFText(text);
-  }
-  return {
-    tipo: "desconocido",
-    folio: getAfter(text, "Folio"),
-    rfc: getAfter(text, "RFC"),
-    fecha: getAfter(text, "Fecha"),
-    sentido: getAfter(text, "Sentido"),
-  };
+  if (d1 === "10" || d1 === "26" || d1 === "0") return parseCSFText(text);
+  return { tipo: "desconocido" };
 }
 
-// HTTP Function
+function parseOpinionFecha(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (/^\d{8,14}$/.test(s)) {
+    const y = +s.slice(0,4), m = +s.slice(4,6)-1, d = +s.slice(6,8);
+    const hh = s.length>=10? +s.slice(8,10):0, mm = s.length>=12? +s.slice(10,12):0, ss = s.length===14? +s.slice(12,14):0;
+    return new Date(y,m,d,hh,mm,ss);
+  }
+  let m = s.match(/^(\d{2})[/-](\d{2})[/-](\d{4})$/);
+  if (m) return new Date(+m[3], +m[2]-1, +m[1]);
+  const dt = new Date(s);
+  return isNaN(dt) ? null : dt;
+}
+const isPositive = (sentido) => /positivo|positiva|^p$/i.test(String(sentido||"").trim());
+
+// --- Descarga + parseo de UNA URL ---
+async function fetchAndParseOne(url) {
+  const fast = tryParseFromQuery(url);
+
+  const { data: html } = await axios.get(url, {
+    headers: { "User-Agent": "Mozilla/5.0", "Accept-Language": "es" },
+    timeout: 15000,
+  });
+
+  const $ = cheerio.load(html);
+  $('script,style,noscript').remove();        // <— evita “PrimeFaces.cw(…)”
+  const text = norm($("body").text());
+
+  const parsed = parseByD1(url, text);
+
+  // Completar con datos del QR si faltan
+  if (fast && fast.tipo === "csf" && fast.rfc && !parsed.rfc) parsed.rfc = fast.rfc;
+  if (fast && fast.tipo === "opinion") {
+    if (fast.folio   && !parsed.folio)   parsed.folio   = fast.folio;
+    if (fast.rfc     && !parsed.rfc)     parsed.rfc     = fast.rfc;
+    if (fast.fecha   && !parsed.fecha)   parsed.fecha   = fast.fecha;
+    if (fast.sentido && !parsed.sentido) parsed.sentido = fast.sentido;
+  }
+
+  return { url, fields: { ...parsed, blob: text, html } };
+}
+
+// --- HTTP Function ---
 exports.satExtract = onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -1488,47 +1518,82 @@ exports.satExtract = onRequest(async (req, res) => {
       return res.status(405).json({ ok: false, error: "Método no permitido. Usa POST." });
     }
 
-    const { url } = req.body || {};
+    const { url, urlOpinion, urlCSF } = req.body || {};
+
+    // MODO PAREJA
+    if (urlOpinion || urlCSF) {
+      if (!urlOpinion || !urlCSF) {
+        return res.status(400).json({ ok: false, error: "Debes enviar ambas URLs: urlOpinion y urlCSF." });
+      }
+      if (!isOfficialSatUrl(urlOpinion) || !isOfficialSatUrl(urlCSF)) {
+        return res.status(400).json({ ok: false, error: "Alguna URL no es oficial del SAT." });
+      }
+
+      const [opinion, csf] = await Promise.all([
+        fetchAndParseOne(urlOpinion),
+        fetchAndParseOne(urlCSF),
+      ]);
+
+      const rfcOpinion = normalizeRFC(opinion.fields.rfc);
+      const rfcCSF     = normalizeRFC(csf.fields.rfc);
+      if (!rfcOpinion || !rfcCSF || rfcOpinion !== rfcCSF) {
+        return res.status(422).json({
+          ok: false,
+          error: "El RFC de la Opinión 32D y el de la CSF no coinciden.",
+          details: { rfcOpinion: rfcOpinion || "?", rfcCSF: rfcCSF || "?" },
+          opinion, csf,
+        });
+      }
+
+      if (!isPositive(opinion.fields.sentido)) {
+        return res.status(422).json({
+          ok: false,
+          error: "La Opinión 32D no es POSITIVA.",
+          details: { sentido: opinion.fields.sentido || "" },
+          opinion, csf,
+        });
+      }
+
+      const fechaOp = parseOpinionFecha(opinion.fields.fecha);
+      if (!fechaOp) {
+        return res.status(422).json({
+          ok: false,
+          error: "No se pudo leer la fecha de la Opinión 32D.",
+          opinion, csf,
+        });
+      }
+      const diffDays = Math.floor((Date.now() - fechaOp.getTime()) / 86400000);
+      if (diffDays < 0 || diffDays > 30) {
+        return res.status(422).json({
+          ok: false,
+          error: "La Opinión 32D tiene más de 30 días (o es futura).",
+          details: { fecha: opinion.fields.fecha, diffDays },
+          opinion, csf,
+        });
+      }
+
+      return res.json({
+        ok: true,
+        mode: "pair",
+        rfcMatch: true,
+        sentido: "Positivo",
+        fechaOpinion: fechaOp.toISOString(),
+        rfc: rfcOpinion,
+        opinion, csf,
+      });
+    }
+
+    // MODO SINGLE
     if (!url) return res.status(400).json({ ok: false, error: "Falta 'url'." });
-    if (!URL_ALLOW.test(url)) {
-      return res.status(400).json({ ok: false, error: "URL no permitida (debe ser del SAT)." });
+    if (!isOfficialSatUrl(url)) {
+      return res.status(400).json({ ok: false, error: "URL no permitida (debe ser oficial del SAT)." });
     }
 
-    // 1) Parseo exprés desde query (nos da fecha_cadena cuando viene en D3)
-    const fast = tryParseFromQuery(url);
+    const result = await fetchAndParseOne(url);
+    return res.json({ ok: true, mode: "single", ...result });
 
-    // 2) Siempre descargamos la página para extraer blob/html
-    const { data: html } = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0", "Accept-Language": "es" },
-      timeout: 15000,
-    });
-
-    const $ = cheerio.load(html);
-    const text = norm($("body").text());
-
-    // 3) Parse según D1 (incluye búsqueda de Cadena en el body)
-    const parsed = parseByD1(url, text);
-
-    // 4) Si fast traía fecha_cadena desde D3 y parsed no la obtuvo, la agregamos
-    if (fast && fast.fecha_cadena && !parsed.fecha_cadena) {
-      parsed.fecha_cadena = fast.fecha_cadena;
-    }
-    if (fast && fast.tipo === "csf" && fast.rfc && !parsed.rfc) {
-      parsed.rfc = fast.rfc;
-    }
-
-    // 5) Devolver SIEMPRE blob/html para que el front haga anclas si hace falta
-    return res.json({
-      ok: true,
-      url,
-      fields: {
-        ...parsed,
-        blob: text,
-        html,
-      },
-    });
-  } catch (err) {
-    console.error("satExtract error:", err);
-    return res.status(500).json({ ok: false, error: err.message || "Error interno" });
+  } catch (error) {
+    console.error("satExtract error:", error);
+    return res.status(500).json({ ok: false, error: error.message || "Error interno" });
   }
 });

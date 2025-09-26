@@ -20,6 +20,10 @@ class OCRProcessor {
       typeof window !== "undefined" && window.satFunctionURL
         ? window.satFunctionURL
         : "";
+
+    // NUEVO: almacenar las URLs detectadas (para verificación en pareja) y flag de verificación
+    this.lastSatUrls = { opinion: null, csf: null };
+    this.satPairVerified = false;
   }
 
   // ==============
@@ -265,109 +269,109 @@ class OCRProcessor {
   // ===========================
   // QR: LECTURA (primera/última)
   // ===========================
-async _scanQrOnPage(pdf, pageNum) {
-  const page = await pdf.getPage(pageNum);
-  
-  // Múltiples configuraciones para intentar
-  const configs = [
-    { scale: 2.0, invert: false },
-    { scale: 2.5, invert: false },
-    { scale: 3.0, invert: false },
-    { scale: 1.5, invert: false },
-    { scale: 2.0, invert: true },
-    { scale: 2.5, invert: true },
-    { scale: 4.0, invert: false },
-    { scale: 1.0, invert: false },
-  ];
-  
-  for (const config of configs) {
-    try {
-      console.log(`[OCR][QR] p${pageNum} probando escala=${config.scale}, invertir=${config.invert}`);
-      
-      const viewport = page.getViewport({ scale: config.scale });
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      
-      // Intentar con configuración específica
-      const qrOptions = config.invert 
-        ? { inversionAttempts: "attemptBoth" }
-        : { inversionAttempts: "dontInvert" };
-      
-      const qr = jsQR(imageData.data, canvas.width, canvas.height, qrOptions);
-      
-      if (qr?.data) {
-        console.log(`[OCR][QR] p${pageNum} ✅ ÉXITO con escala=${config.scale}, invertir=${config.invert}`);
-        console.log(`[OCR][QR] p${pageNum} URL:`, qr.data.substring(0, 100) + "...");
+  async _scanQrOnPage(pdf, pageNum) {
+    const page = await pdf.getPage(pageNum);
+    
+    // Múltiples configuraciones para intentar
+    const configs = [
+      { scale: 2.0, invert: false },
+      { scale: 2.5, invert: false },
+      { scale: 3.0, invert: false },
+      { scale: 1.5, invert: false },
+      { scale: 2.0, invert: true },
+      { scale: 2.5, invert: true },
+      { scale: 4.0, invert: false },
+      { scale: 1.0, invert: false },
+    ];
+    
+    for (const config of configs) {
+      try {
+        console.log(`[OCR][QR] p${pageNum} probando escala=${config.scale}, invertir=${config.invert}`);
         
-        // Validar que la URL sea del SAT antes de devolver
-        if (/^https:\/\/siat\.sat\.gob\.mx\/app\/qr\//i.test(qr.data)) {
-          return qr.data;
-        } else {
-          console.log(`[OCR][QR] p${pageNum} ❌ URL no es del SAT, continuando...`);
+        const viewport = page.getViewport({ scale: config.scale });
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        
+        // Intentar con configuración específica
+        const qrOptions = config.invert 
+          ? { inversionAttempts: "attemptBoth" }
+          : { inversionAttempts: "dontInvert" };
+        
+        const qr = jsQR(imageData.data, canvas.width, canvas.height, qrOptions);
+        
+        if (qr?.data) {
+          console.log(`[OCR][QR] p${pageNum} ✅ ÉXITO con escala=${config.scale}, invertir=${config.invert}`);
+          console.log(`[OCR][QR] p${pageNum} URL:`, qr.data.substring(0, 100) + "...");
+          
+          // Validar (laxo) que la URL sea del SAT antes de devolver
+          if (/^https:\/\/siat\.sat\.gob\.mx\/app\/qr\//i.test(qr.data)) {
+            return qr.data;
+          } else {
+            console.log(`[OCR][QR] p${pageNum} ❌ URL no es del SAT, continuando...`);
+          }
+        }
+        
+      } catch (error) {
+        console.warn(`[OCR][QR] p${pageNum} Error con escala ${config.scale}:`, error.message);
+      }
+    }
+    
+    console.log(`[OCR][QR] p${pageNum} ❌ No se pudo leer QR con ninguna configuración`);
+    return null;
+  }
+
+  async readSatQrUrls(file) {
+    if (typeof jsQR === "undefined") {
+      throw new Error("La librería jsQR no está cargada.");
+    }
+    
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    const first = 1;
+    const last = pdf.numPages;
+
+    this.log("[QR]", `numPages=${pdf.numPages}, escaneo: primero=${first}, ultimo=${last}`);
+
+    const results = [];
+    const seen = new Set();
+
+    for (const p of [first, last]) {
+      if (p < 1 || p > pdf.numPages) continue;
+      
+      const url = await this._scanQrOnPage(pdf, p);
+      if (url) {
+        const isSat = /^https:\/\/siat\.sat\.gob\.mx\/app\/qr\//i.test(url);
+        this.log("[QR]", `p${p} encontrado=${isSat ? "SAT" : "NO-SAT"} → ${url}`);
+        
+        if (isSat && !seen.has(url)) {
+          seen.add(url);
+          results.push({ page: p, url });
+        } else if (isSat) {
+          this.log("[QR]", `p${p} duplicado (mismo URL)`);
         }
       }
-      
-    } catch (error) {
-      console.warn(`[OCR][QR] p${pageNum} Error con escala ${config.scale}:`, error.message);
     }
-  }
-  
-  console.log(`[OCR][QR] p${pageNum} ❌ No se pudo leer QR con ninguna configuración`);
-  return null;
-}
 
-async readSatQrUrls(file) {
-  if (typeof jsQR === "undefined") {
-    throw new Error("La librería jsQR no está cargada.");
-  }
-  
-  const buf = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-  const first = 1;
-  const last = pdf.numPages;
-
-  this.log("[QR]", `numPages=${pdf.numPages}, escaneo: primero=${first}, ultimo=${last}`);
-
-  const results = [];
-  const seen = new Set();
-
-  for (const p of [first, last]) {
-    if (p < 1 || p > pdf.numPages) continue;
-    
-    const url = await this._scanQrOnPage(pdf, p);
-    if (url) {
-      const isSat = /^https:\/\/siat\.sat\.gob\.mx\/app\/qr\//i.test(url);
-      this.log("[QR]", `p${p} encontrado=${isSat ? "SAT" : "NO-SAT"} → ${url}`);
-      
-      if (isSat && !seen.has(url)) {
-        seen.add(url);
-        results.push({ page: p, url });
-      } else if (isSat) {
-        this.log("[QR]", `p${p} duplicado (mismo URL)`);
-      }
+    // Logging de resultados
+    if (results.length === 0) {
+      this.warn("[QR]", "No se detectó ningún QR SAT en primera/última página.");
+    } else if (results.length === 1) {
+      this.log("[QR]", "Solo 1 QR detectado:", results[0]);
+    } else if (results.length === 2) {
+      this.log("[QR]", "2 QRs detectados:", results[0], results[1]);
     }
-  }
 
-  // Logging de resultados
-  if (results.length === 0) {
-    this.warn("[QR]", "No se detectó ningún QR SAT en primera/última página.");
-  } else if (results.length === 1) {
-    this.log("[QR]", "Solo 1 QR detectado:", results[0]);
-  } else if (results.length === 2) {
-    this.log("[QR]", "2 QRs detectados:", results[0], results[1]);
+    return {
+      primaryUrl: results[0]?.url || null,
+      auxUrl: results[1]?.url || null,
+    };
   }
-
-  return {
-    primaryUrl: results[0]?.url || null,
-    auxUrl: results[1]?.url || null,
-  };
-}
 
   // ===============================
   // FECHA desde Cadena Original
@@ -469,7 +473,7 @@ async readSatQrUrls(file) {
   }
 
   // =====================================================================================
-  // Llamar la Function del SAT (robusto: valida endpoint y parsea respuesta)
+  // Llamar la Function del SAT (single)
   // =====================================================================================
   async callSat(urlDelQr) {
     const endpoint = this.getSatURL();
@@ -510,6 +514,86 @@ async readSatQrUrls(file) {
 
     this.log("[SAT][Call]", "OK, keys:", Object.keys(data.fields || {}));
     return data.fields || {};
+  }
+
+  // =====================================================================================
+  // NUEVO: Llamar la Function del SAT en MODO PAREJA (comparar RFC)
+  // =====================================================================================
+  async callSatPair(urlOpinion, urlCSF) {
+    const endpoint = this.getSatURL();
+    this.log("[SAT][Pair]", "POST", endpoint, { urlOpinion, urlCSF });
+
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urlOpinion, urlCSF }),
+    });
+
+    const raw = await resp.text();
+
+    if (!resp.ok) {
+      let msg = `SAT pair error ${resp.status}`;
+      try {
+        const err = JSON.parse(raw);
+        msg = err.error || msg;
+        if (resp.status === 422 && err.details) {
+          msg += ` (RFC Opinión: ${err.details.rfcOpinion || "?"} vs RFC CSF: ${err.details.rfcCSF || "?"})`;
+        }
+      } catch {}
+      throw new Error(msg);
+    }
+
+    let data;
+    try { data = JSON.parse(raw); } catch { throw new Error("Respuesta no-JSON del SAT (pair)."); }
+
+    if (!data.ok || !data.rfcMatch) {
+      throw new Error(data.error || "Los RFC no coinciden entre Opinión y CSF.");
+    }
+    return data; // { ok:true, mode:'pair', rfcMatch:true, rfc, opinion, csf }
+  }
+
+  // =====================================================================================
+  // NUEVO: Validación estricta de URL SAT oficial
+  // =====================================================================================
+  isOfficialSatUrl(u) {
+    try {
+      const { protocol, hostname, pathname } = new URL(u);
+      return (
+        protocol === "https:" &&
+        hostname.toLowerCase() === "siat.sat.gob.mx" &&
+        /^\/app\/qr\/faces\/pages\/mobile\/validadorqr\.jsf$/i.test(pathname)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  // =====================================================================================
+  // NUEVO: Verifica en pareja si ya hay ambas URLs (lanza Error si no coincide el RFC)
+  // =====================================================================================
+  async verifySatPairIfReady() {
+    const { opinion, csf } = this.lastSatUrls;
+    if (!opinion || !csf || this.satPairVerified) return false;
+
+    // Validación estricta en front
+    if (!this.isOfficialSatUrl(opinion) || !this.isOfficialSatUrl(csf)) {
+      throw new Error("Alguna URL no es la oficial del SAT.");
+    }
+
+    const pair = await this.callSatPair(opinion, csf);
+
+    // Sincroniza RFC en la data ya mapeada
+    const rfc = (pair.rfc || "").toUpperCase();
+    if (this.documentData.opinion)   this.documentData.opinion.rfc   = rfc;
+    if (this.documentData.constancia) this.documentData.constancia.rfc = rfc;
+
+    this.satPairVerified = true;
+
+    window.dispatchEvent(new CustomEvent("satPairVerified", {
+      detail: { ok: true, rfc, opinionUrl: opinion, csfUrl: csf }
+    }));
+
+    return true;
   }
 
   // =====================================================================================
@@ -700,18 +784,21 @@ async readSatQrUrls(file) {
       this.log("[QR]", "auxUrl    :", auxUrl);
 
       if (!primaryUrl) throw new Error("No se detectó QR del SAT en el PDF.");
-      if (!/^https:\/\/siat\.sat\.gob\.mx\/app\/qr\//i.test(primaryUrl)) {
-        throw new Error("El QR no pertenece al dominio del SAT.");
+      if (!this.isOfficialSatUrl(primaryUrl)) {
+        throw new Error("El QR no corresponde a la URL oficial del SAT.");
       }
 
-      // 1) Llamada principal
+      // SINGLE call
       const fieldsMain = await this.callSat(primaryUrl);
 
       if (documentType === "constancia") {
         const csf = this.mapSatCSFToDoc(fieldsMain);
         csf.tipoPersona = this.guessTipoPersona(csf.rfc);
 
-        // 2) Intentar segunda llamada (última página) para tomar fecha de la Cadena Original
+        // Guardamos URL para verificación par
+        this.lastSatUrls.csf = primaryUrl;
+
+        // Intentar segunda llamada (última página) para fecha de la Cadena Original
         if (auxUrl && auxUrl !== primaryUrl) {
           this.log("[QR]", "Intentando AUX url para fecha Cadena Original");
           try {
@@ -740,8 +827,28 @@ async readSatQrUrls(file) {
           }
         }
 
+        // NUEVO: si ya hay opinión, verificar par ANTES de subir
+        if (this.lastSatUrls.opinion) {
+          await this.verifySatPairIfReady(); // lanza Error si no coinciden
+        }
+
         await this.uploadOnly("constancia", file);
+
+        // Evento por si quieres enganchar UI externa (muestra los fields RAW del SAT)
+        window.dispatchEvent(
+          new CustomEvent("satExtracted", {
+            detail: {
+              tipo: "csf",
+              fields: fieldsMain,
+              url: primaryUrl,
+              file,
+            },
+          })
+        );
+
+        return this.documentData.constancia;
       } else {
+        // Opinión
         const op = this.mapSatOpinionToDoc(fieldsMain);
         if (this.documentData.constancia?.companyName && !op.companyName) {
           op.companyName = this.documentData.constancia.companyName;
@@ -749,24 +856,28 @@ async readSatQrUrls(file) {
         if (!op.rfc && this.documentData.constancia?.rfc) {
           op.rfc = this.documentData.constancia.rfc;
         }
+
+        // Guarda URL y, si ya hay CSF, verifica par ANTES de subir
+        this.lastSatUrls.opinion = primaryUrl;
+        if (this.lastSatUrls.csf) {
+          await this.verifySatPairIfReady(); // lanza Error si RFC no coincide
+        }
+
         await this.uploadOnly("opinion", file);
+
+        window.dispatchEvent(
+          new CustomEvent("satExtracted", {
+            detail: {
+              tipo: "opinion",
+              fields: fieldsMain,
+              url: primaryUrl,
+              file,
+            },
+          })
+        );
+
+        return this.documentData.opinion;
       }
-
-      // Evento por si quieres enganchar UI externa (muestra los fields RAW del SAT)
-      window.dispatchEvent(
-        new CustomEvent("satExtracted", {
-          detail: {
-            tipo: documentType === "constancia" ? "csf" : "opinion",
-            fields: fieldsMain,
-            url: primaryUrl,
-            file,
-          },
-        })
-      );
-
-      return documentType === "constancia"
-        ? this.documentData.constancia
-        : this.documentData.opinion;
     }
 
     if (documentType === "bancario") {
@@ -1149,6 +1260,8 @@ async readSatQrUrls(file) {
       positiveOpinion: false,
       dateValid: false,
     };
+    this.lastSatUrls = { opinion: null, csf: null };
+    this.satPairVerified = false;
   }
 }
 
