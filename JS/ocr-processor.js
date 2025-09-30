@@ -516,41 +516,42 @@ class OCRProcessor {
     return data.fields || {};
   }
 
-  // =====================================================================================
-  // NUEVO: Llamar la Function del SAT en MODO PAREJA (comparar RFC)
-  // =====================================================================================
-  async callSatPair(urlOpinion, urlCSF) {
-    const endpoint = this.getSatURL();
-    this.log("[SAT][Pair]", "POST", endpoint, { urlOpinion, urlCSF });
+async callSatPair(urlOpinion, urlCSF) {
+  const endpoint = this.getSatURL();
+  this.log("[SAT][Pair]", "POST", endpoint, { urlOpinion, urlCSF });
 
-    const resp = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ urlOpinion, urlCSF }),
-    });
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ urlOpinion, urlCSF }),
+  });
 
-    const raw = await resp.text();
+  const text = await resp.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* ignore non-JSON */ }
 
-    if (!resp.ok) {
-      let msg = `SAT pair error ${resp.status}`;
-      try {
-        const err = JSON.parse(raw);
-        msg = err.error || msg;
-        if (resp.status === 422 && err.details) {
-          msg += ` (RFC Opinión: ${err.details.rfcOpinion || "?"} vs RFC CSF: ${err.details.rfcCSF || "?"})`;
-        }
-      } catch {}
-      throw new Error(msg);
-    }
+  // Cualquier error o rfcMatch=false => evento + throw con reason
+  if (!resp.ok || !data?.ok || !data?.rfcMatch) {
+    const reason  = (data && data.reason)  || "SAT_PAIR_FAIL";
+    const message = (data && data.error)   || `SAT pair failed ${resp.status}`;
+    const details = (data && data.details) || {};
 
-    let data;
-    try { data = JSON.parse(raw); } catch { throw new Error("Respuesta no-JSON del SAT (pair)."); }
+    // Notificar al UI
+    window.dispatchEvent(new CustomEvent("satPairFailed", {
+      detail: { reason, message, details, raw: data }
+    }));
 
-    if (!data.ok || !data.rfcMatch) {
-      throw new Error(data.error || "Los RFC no coinciden entre Opinión y CSF.");
-    }
-    return data; // { ok:true, mode:'pair', rfcMatch:true, rfc, opinion, csf }
+    const err = new Error(message);
+    err.reason  = reason;
+    err.details = details;
+    throw err;
   }
+
+  // OK
+  window.dispatchEvent(new CustomEvent("satPairVerified", { detail: data }));
+  return data; // { ok:true, mode:'pair', rfcMatch:true, rfc, opinion, csf }
+}
+
 
   // =====================================================================================
   // NUEVO: Validación estricta de URL SAT oficial

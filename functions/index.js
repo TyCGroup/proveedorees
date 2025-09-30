@@ -1,6 +1,7 @@
 const {onDocumentCreated} = require("firebase-functions/v2/firestore");
 const {onCall} = require("firebase-functions/v2/https");
 const {onRequest} = require("firebase-functions/v2/https");
+const {onSchedule} = require("firebase-functions/v2/scheduler");
 const {logger} = require("firebase-functions");
 const admin = require("firebase-admin");
 const nodemailer = require("nodemailer");
@@ -8,6 +9,7 @@ const nodemailer = require("nodemailer");
 const axios = require("axios");
 const cheerio = require("cheerio");
 const { URL } = require("url");
+const XLSX = require("xlsx");
 
 admin.initializeApp();
 
@@ -1507,6 +1509,19 @@ async function fetchAndParseOne(url) {
   return { url, fields: { ...parsed, blob: text, html } };
 }
 
+async function isRfcIn69B(rfc) {
+  const R = normalizeRFC(rfc);
+  if (!R) return false;
+  const db = admin.firestore();
+  // 1) lookup por ID
+  const byId = await db.collection("69B").doc(R).get();
+  if (byId.exists) return true;
+  // 2) fallback por campo (por si guardaste con otro ID)
+  const snap = await db.collection("69B").where("rfc", "==", R).limit(1).get();
+  return !snap.empty;
+}
+
+
 // --- HTTP Function ---
 exports.satExtract = onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
@@ -1520,7 +1535,9 @@ exports.satExtract = onRequest(async (req, res) => {
 
     const { url, urlOpinion, urlCSF } = req.body || {};
 
-    // MODO PAREJA
+    // ======================
+    // MODO PAREJA (OPINIÓN + CSF)
+    // ======================
     if (urlOpinion || urlCSF) {
       if (!urlOpinion || !urlCSF) {
         return res.status(400).json({ ok: false, error: "Debes enviar ambas URLs: urlOpinion y urlCSF." });
@@ -1529,11 +1546,13 @@ exports.satExtract = onRequest(async (req, res) => {
         return res.status(400).json({ ok: false, error: "Alguna URL no es oficial del SAT." });
       }
 
+      // 1) Descargar y parsear ambas páginas del SAT
       const [opinion, csf] = await Promise.all([
         fetchAndParseOne(urlOpinion),
         fetchAndParseOne(urlCSF),
       ]);
 
+      // 2) Coincidencia de RFC
       const rfcOpinion = normalizeRFC(opinion.fields.rfc);
       const rfcCSF     = normalizeRFC(csf.fields.rfc);
       if (!rfcOpinion || !rfcCSF || rfcOpinion !== rfcCSF) {
@@ -1545,6 +1564,19 @@ exports.satExtract = onRequest(async (req, res) => {
         });
       }
 
+      // 3) BLOQUEO por lista 69-B
+      const listed = await isRfcIn69B(rfcOpinion);
+      if (listed) {
+        return res.status(422).json({
+          ok: false,
+          reason: "RFC_IN_69B",
+          error: "El RFC aparece en la lista 69-B del SAT y no puede continuar.",
+          details: { rfc: rfcOpinion },
+          opinion, csf,
+        });
+      }
+
+      // 4) Sentido POSITIVO
       if (!isPositive(opinion.fields.sentido)) {
         return res.status(422).json({
           ok: false,
@@ -1554,6 +1586,7 @@ exports.satExtract = onRequest(async (req, res) => {
         });
       }
 
+      // 5) Fecha de la Opinión: <= 30 días (no futura)
       const fechaOp = parseOpinionFecha(opinion.fields.fecha);
       if (!fechaOp) {
         return res.status(422).json({
@@ -1572,19 +1605,25 @@ exports.satExtract = onRequest(async (req, res) => {
         });
       }
 
+      // 6) OK
       return res.json({
         ok: true,
         mode: "pair",
         rfcMatch: true,
+        rfc: rfcOpinion,
         sentido: "Positivo",
         fechaOpinion: fechaOp.toISOString(),
-        rfc: rfcOpinion,
-        opinion, csf,
+        opinion,
+        csf,
       });
     }
 
-    // MODO SINGLE
-    if (!url) return res.status(400).json({ ok: false, error: "Falta 'url'." });
+    // ======================
+    // MODO SINGLE (una sola URL del SAT)
+    // ======================
+    if (!url) {
+      return res.status(400).json({ ok: false, error: "Falta 'url'." });
+    }
     if (!isOfficialSatUrl(url)) {
       return res.status(400).json({ ok: false, error: "URL no permitida (debe ser oficial del SAT)." });
     }
@@ -1597,3 +1636,110 @@ exports.satExtract = onRequest(async (req, res) => {
     return res.status(500).json({ ok: false, error: error.message || "Error interno" });
   }
 });
+
+// ====== SAT 69-B: REPLACE COMPLETO (borra colección y reescribe con últimos RFC) ======
+
+const BASE_PAGE_69B = "http://omawww.sat.gob.mx/cifras_sat/Paginas/DatosAbiertos/contribuyentes_publicados.html";
+const BASE_HOST_69B = "http://omawww.sat.gob.mx";
+
+// --- Encuentra el enlace "Listado completo" en la página del SAT ---
+function pickListadoCompletoLink(html) {
+  const $ = cheerio.load(html);
+  let link = null;
+  $("a").each((_, a) => {
+    const txt = ($(a).text() || "")
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (txt.includes("listado completo")) { link = $(a).attr("href") || null; return false; }
+  });
+  if (!link) return null;
+  if (/^https?:\/\//i.test(link)) return link;
+  return BASE_HOST_69B + (link.startsWith("/") ? link : "/" + link);
+}
+
+async function fetchListadoCompletoExcelUrl() {
+  const { data: html } = await axios.get(BASE_PAGE_69B, { timeout: 20000 });
+  const url = pickListadoCompletoLink(html);
+  if (!url) throw new Error("No se encontró el enlace 'Listado completo' en la página del SAT.");
+  return url;
+}
+
+async function downloadExcelBuffer(excelUrl) {
+  const resp = await axios.get(excelUrl, { responseType: "arraybuffer", timeout: 60000 });
+  return Buffer.from(resp.data);
+}
+
+// --- SOLO RFC: lee columna B (índice 1) desde la fila 3 (índice 2) ---
+function extractRFCsFromSheet(ws) {
+  const ref = ws["!ref"] || "A1:A1";
+  const range = XLSX.utils.decode_range(ref);
+  const rfcs = [];
+  const seen = new Set();
+
+  for (let r = Math.max(2, range.s.r); r <= range.e.r; r++) {
+    const addr = XLSX.utils.encode_cell({ c: 1, r });  // Columna B
+    const cell = ws[addr];
+    if (!cell) continue;
+
+    let rfc = String(cell.v != null ? cell.v : "").toUpperCase().replace(/\s+/g, "").trim();
+    if (!/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(rfc)) continue;  // valida formato
+    if (!seen.has(rfc)) { seen.add(rfc); rfcs.push(rfc); }
+  }
+  return rfcs;
+}
+
+// --- Borra TODOS los docs de una colección usando BulkWriter ---
+async function wipeCollection(colPath) {
+  const db = admin.firestore();
+  const writer = db.bulkWriter();
+  const refs = await db.collection(colPath).listDocuments(); // no lee contenido, solo refs
+  for (const ref of refs) writer.delete(ref);
+  await writer.close();
+}
+
+// --- Reemplaza colección 69B con la lista nueva ---
+async function replace69BFromBuffer(buf, excelUrl) {
+  const wb = XLSX.read(buf, { type: "buffer" });   // autodetecta .xlsx o .csv
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  if (!ws) throw new Error("El archivo no tiene hojas válidas.");
+
+  const rfcs = extractRFCsFromSheet(ws);
+  const db = admin.firestore();
+
+  // 1) BORRAR TODO lo anterior
+  await wipeCollection("69B");
+
+  // 2) ESCRIBIR los nuevos
+  const writer = db.bulkWriter();
+  for (const rfc of rfcs) {
+    writer.set(db.collection("69B").doc(rfc), {
+      rfc,
+      lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+      sourceUrl: excelUrl,
+    });
+  }
+  await writer.close();
+
+  // Bitácora del import
+  await db.collection("69B_imports").add({
+    at: admin.firestore.FieldValue.serverTimestamp(),
+    sourceUrl: excelUrl,
+    totalRFCs: rfcs.length,
+    mode: "replace",
+  });
+
+  return { totalRFCs: rfcs.length };
+}
+
+// === Programado mensual: día 3 a las 09:00 (hora CDMX) ===
+exports.replaceSat69BMonthly = onSchedule(
+  { schedule: "0 4 * * *", timeZone: "America/Mexico_City", memory: "1GiB", timeoutSeconds: 540 },
+  async () => {
+    const excelUrl = await fetchListadoCompletoExcelUrl();
+    const buf = await downloadExcelBuffer(excelUrl);
+    const r = await replace69BFromBuffer(buf, excelUrl);
+    console.log("69B replace done:", r);
+    return r;
+  }
+);
+

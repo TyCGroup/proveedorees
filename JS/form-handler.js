@@ -35,7 +35,10 @@ class FormHandler {
             bic: '',
             convenioCie: ''
         };
-        this.isManualReviewFlow = false; // Flag para flujo de revisión manual
+
+        this.isManualReviewFlow = false;   // Flag para flujo de revisión manual
+        this.forceManualReview = false;    // ⬅️ Candado: si falla SAT (mismatch/69B/etc.), queda forzado a revisión manual
+        this.pairFailureMsg = '';          // ⬅️ Último mensaje de rechazo SAT para mostrar en la UI
 
         // Escuchar eventos del nuevo flujo
         window.addEventListener('fileUploaded', (e) => {
@@ -58,6 +61,26 @@ class FormHandler {
                 const { tipo, fields } = e.detail || {};
                 console.log('[satExtracted]', tipo, fields);
             } catch {}
+        });
+
+        // 🔔 Validación cruzada (pair) reportada por ocr-processor
+        window.addEventListener('satPairVerified', (e) => {
+            const { rfc } = (e.detail || {});
+            console.log('[satPairVerified] RFC validado:', rfc);
+            this.showOverallValidation('success', `RFC validado contra SAT: ${rfc}`);
+            // Quitar candado si traen documentos nuevos válidos
+            this.forceManualReview = false;
+            this.pairFailureMsg = '';
+        });
+
+        window.addEventListener('satPairFailed', (e) => {
+            const { reason, message } = (e.detail || {});
+            console.warn('[satPairFailed]', reason, message);
+            // Forzar revisión manual cuando falla pair (RFC_IN_69B, RFC_MISMATCH, NOT_POSITIVE, OPINION_TOO_OLD, etc.)
+            this.forceManualReview = true;
+            this.pairFailureMsg = message || '';
+            this.showOverallValidation('error', `Validación SAT rechazada (${reason}). ${message || ''}`);
+            this.switchToManualReviewFlow();
         });
 
         this.initializeEventListeners();
@@ -382,6 +405,14 @@ class FormHandler {
             this.showFileError(type, error.message || 'Error al procesar el archivo');
             this.uploadedFiles[type] = null;
             this.updateUploadAreaAppearance(type, 'error');
+
+            // ⚠️ Candado persistente si proviene de validación SAT (69-B, mismatch, no positiva, etc.)
+            const msg = (error && (error.message || error.toString())) || '';
+            if (error.reason || /69-?B/i.test(msg) || /RFC.*no coinciden/i.test(msg) || /no es POSITIVA/i.test(msg)) {
+                this.forceManualReview = true;
+                this.pairFailureMsg = msg;
+                this.switchToManualReviewFlow();
+            }
         } finally {
             this.hideLoading();
         }
@@ -531,6 +562,14 @@ class FormHandler {
     // Check overall validation con flujo de revisión manual
     // ========================================
     checkOverallValidation() {
+        // 🔒 Si ya falló la validación SAT (candado activado), mantener siempre revisión manual
+        if (this.forceManualReview) {
+            const baseMsg = this.pairFailureMsg || 'Validación SAT rechazada. Continúe con Revisión manual.';
+            this.showOverallValidation('error', baseMsg);
+            this.switchToManualReviewFlow();
+            return;
+        }
+
         const hasRequiredFiles = this.uploadedFiles.opinion && 
                                 this.uploadedFiles.constancia && 
                                 this.uploadedFiles.bancario;
@@ -541,8 +580,10 @@ class FormHandler {
 
         if (hasRequiredFiles && hasValidDocuments) {
             const crossValidation = window.ocrProcessor.validateDocuments();
-            
-            if (crossValidation.companyNameMatch && 
+            const pairOK = window.ocrProcessor?.satPairVerified === true; // ✅ exigir validación cruzada OK
+
+            if (pairOK &&
+                crossValidation.companyNameMatch && 
                 crossValidation.positiveOpinion && 
                 crossValidation.dateValid) {
                 
@@ -552,6 +593,7 @@ class FormHandler {
                 
             } else {
                 const errors = [];
+                if (!pairOK) errors.push('Validación cruzada SAT (RFC/69-B) no superada');
                 if (!crossValidation.companyNameMatch) errors.push('Los nombres de empresa no coinciden entre documentos');
                 if (!crossValidation.positiveOpinion) errors.push('La opinión de cumplimiento debe ser POSITIVA');
                 if (!crossValidation.dateValid) errors.push('La fecha de emisión de la constancia excede 30 días');
@@ -710,6 +752,14 @@ class FormHandler {
 
     // Show company information step
     showCompanyInfo() {
+        // 🚫 No permitir flujo normal si hay candado o si el par no está verificado
+        if (this.forceManualReview || window.ocrProcessor?.satPairVerified !== true) {
+            this.switchToManualReviewFlow();
+            const msg = this.pairFailureMsg || 'Validación SAT pendiente o rechazada. Continúe con Revisión manual.';
+            this.showOverallValidation('error', msg);
+            return;
+        }
+
         const hasValidDocuments = this.validationStatus.opinion && 
                                  this.validationStatus.constancia && 
                                  this.validationStatus.bancario;
@@ -901,34 +951,34 @@ class FormHandler {
     // Upload files a Storage (reutiliza URLs ya subidas por ocr-processor)
     // form-handler.js
     async uploadFilesToStorage() {
-    const storage = firebase.storage();
-    const fileUrls = {};
+        const storage = firebase.storage();
+        const fileUrls = {};
 
-    // Reutiliza el mismo submissionId de la sesión
-    let submissionId = sessionStorage.getItem('submissionId');
-    if (!submissionId) {
-        submissionId = `sub-${Date.now()}`;
-        sessionStorage.setItem('submissionId', submissionId);
-    }
+        // Reutiliza el mismo submissionId de la sesión
+        let submissionId = sessionStorage.getItem('submissionId');
+        if (!submissionId) {
+            submissionId = `sub-${Date.now()}`;
+            sessionStorage.setItem('submissionId', submissionId);
+        }
 
-    const fileNameMapping = {
-        opinion: '32D.pdf',
-        constancia: 'CSF.pdf',
-        bancario: 'EDO.CTA.pdf'
-    };
+        const fileNameMapping = {
+            opinion: '32D.pdf',
+            constancia: 'CSF.pdf',
+            bancario: 'EDO.CTA.pdf'
+        };
 
-    for (const [type, file] of Object.entries(this.uploadedFiles)) {
-        if (!file) continue;
+        for (const [type, file] of Object.entries(this.uploadedFiles)) {
+            if (!file) continue;
 
-        const standardFileName = fileNameMapping[type] || `${type}.pdf`;
-        const storageRef = storage.ref(`suppliers/${submissionId}/${standardFileName}`);
+            const standardFileName = fileNameMapping[type] || `${type}.pdf`;
+            const storageRef = storage.ref(`suppliers/${submissionId}/${standardFileName}`);
 
-        const metadata = { contentType: 'application/pdf' };
-        await storageRef.put(file, metadata);
+            const metadata = { contentType: 'application/pdf' };
+            await storageRef.put(file, metadata);
 
-        fileUrls[type] = await storageRef.getDownloadURL();
-    }
-    return fileUrls;
+            fileUrls[type] = await storageRef.getDownloadURL();
+        }
+        return fileUrls;
     }
 
     fileToSerializable(file) {
@@ -1024,6 +1074,9 @@ class FormHandler {
         };
         this.currentStep = 'documents';
         this.isManualReviewFlow = false;
+        this.forceManualReview = false;   // limpiar candado
+        this.pairFailureMsg = '';
+
         if (window.ocrProcessor) window.ocrProcessor.reset();
         if (window.contactStepHandler) window.contactStepHandler.clearContactForm?.();
         if (window.commercialConditionsHandler) window.commercialConditionsHandler.clearCommercialForm?.();
