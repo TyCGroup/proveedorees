@@ -36,16 +36,15 @@ class FormHandler {
             convenioCie: ''
         };
 
-        this.isManualReviewFlow = false;   // Flag para flujo de revisión manual
-        this.forceManualReview = false;    // ⬅️ Candado: si falla SAT (mismatch/69B/etc.), queda forzado a revisión manual
-        this.pairFailureMsg = '';          // ⬅️ Último mensaje de rechazo SAT para mostrar en la UI
+        this.isManualReviewFlow = false;   // Flag flujo revisión manual
+        this.forceManualReview = false;    // Candado cuando falla SAT pair
+        this.pairFailureMsg = '';
 
         // Escuchar eventos del nuevo flujo
         window.addEventListener('fileUploaded', (e) => {
             const { docType, url } = e.detail || {};
             if (docType && url) {
                 this.uploadedUrls[docType] = url;
-                // Reflejar visualmente éxito si quieres
                 const v = document.getElementById(`${docType}-validation`);
                 if (v && !v.classList.contains('success')) {
                     v.className = 'validation-status success';
@@ -56,45 +55,94 @@ class FormHandler {
         });
 
         window.addEventListener('satExtracted', (e) => {
-            // Solo logging/diagnóstico
             try {
                 const { tipo, fields } = e.detail || {};
                 console.log('[satExtracted]', tipo, fields);
             } catch {}
         });
 
-        // 🔔 Validación cruzada (pair) reportada por ocr-processor
+        // Validación cruzada (pair) del backend
         window.addEventListener('satPairVerified', (e) => {
             const { rfc } = (e.detail || {});
             console.log('[satPairVerified] RFC validado:', rfc);
-            this.showOverallValidation('success', `RFC validado contra SAT: ${rfc}`);
-            // Quitar candado si traen documentos nuevos válidos
             this.forceManualReview = false;
             this.pairFailureMsg = '';
+            this.showOverallValidation('success', `RFC validado contra SAT: ${rfc}`);
+            this.checkOverallValidation(); // refresca botón al instante
         });
 
         window.addEventListener('satPairFailed', (e) => {
             const { reason, message } = (e.detail || {});
             console.warn('[satPairFailed]', reason, message);
-            // Forzar revisión manual cuando falla pair (RFC_IN_69B, RFC_MISMATCH, NOT_POSITIVE, OPINION_TOO_OLD, etc.)
             this.forceManualReview = true;
             this.pairFailureMsg = message || '';
             this.showOverallValidation('error', `Validación SAT rechazada (${reason}). ${message || ''}`);
             this.switchToManualReviewFlow();
+            this.checkOverallValidation(); // asegura que el estado quede consistente
         });
 
         this.initializeEventListeners();
     }
 
+    // ----------------- NUEVO: helpers de revalidación -----------------
+    resetValidationFor(type) {
+        // Limpia UI del documento cambiado
+        const v = document.getElementById(`${type}-validation`);
+        if (v) { v.className = 'validation-status'; v.style.display = 'none'; v.innerHTML = ''; }
+
+        // Si cambian CSF u Opinión, hay que permitir reintentar el pair SAT
+        if (type === 'opinion' || type === 'constancia') {
+            this.forceManualReview = false;   // quitar candado al re-subir
+            this.pairFailureMsg = '';
+            // Limpia indicadores del ocrProcessor si existen
+            if (window.ocrProcessor) {
+                try {
+                    if ('satPairVerified' in window.ocrProcessor) window.ocrProcessor.satPairVerified = null;
+                    if (typeof window.ocrProcessor.clearPairState === 'function') window.ocrProcessor.clearPairState();
+                } catch (e) { console.debug('No se pudo limpiar estado pair:', e); }
+            }
+        }
+
+        // Feedback de revalidación
+        const overall = document.getElementById('overall-validation');
+        if (overall && overall.querySelector('.validation-message')) {
+            overall.className = 'overall-validation info';
+            overall.querySelector('.validation-message').textContent = 'Revalidando documentos...';
+            overall.style.display = 'block';
+        }
+
+        // Botón siguiente deshabilitado mientras valida
+        this.disableNextStep();
+    }
+
+    async revalidateAll(type) {
+        // Reintentar pair SAT si el documento modificado es CSF u Opinión
+        if (type === 'opinion' || type === 'constancia') {
+            try {
+                const pairFn =
+                    window.ocrProcessor?.verifySatPair ||
+                    window.ocrProcessor?.validatePair ||
+                    window.ocrProcessor?.checkPair ||
+                    null;
+                if (typeof pairFn === 'function') {
+                    await pairFn.call(window.ocrProcessor);
+                }
+            } catch (e) {
+                console.warn('Error al reintentar SAT pair:', e);
+            }
+        }
+        // Recalcula estado global
+        this.checkOverallValidation();
+    }
+    // ------------------------------------------------------------------
+
     // Initialize event listeners
     initializeEventListeners() {
-        // Declaration checkbox
         const declarationCheckbox = document.getElementById('accept-declaration');
         if (declarationCheckbox) {
             declarationCheckbox.addEventListener('change', this.handleDeclarationChange.bind(this));
         }
 
-        // File input change listeners
         ['opinion', 'constancia', 'bancario'].forEach(type => {
             const fileInput = document.getElementById(`${type}-file`);
             if (fileInput) {
@@ -114,7 +162,6 @@ class FormHandler {
         bankingFields.forEach(fieldId => {
             const input = document.getElementById(fieldId);
             if (input) {
-                // Remove existing listeners to avoid duplicates
                 input.removeEventListener('input', this.handleBankingInput);
                 input.removeEventListener('blur', this.validateBankingData);
                 
@@ -151,7 +198,6 @@ class FormHandler {
             'convenio-cie': 'convenioCie'
         };
         
-        // Validaciones específicas por campo
         switch (input.id) {
             case 'telefono-cobranza':
                 value = value.replace(/[^\d\s-]/g, '');
@@ -181,14 +227,11 @@ class FormHandler {
         if (input.required) this.validateBankingForm();
     }
 
-    // Nuevo método para validar el formulario bancario completo
     validateBankingForm() {
         const numeroCuenta = document.getElementById('numero-cuenta').value;
         const clabe = document.getElementById('clabe').value;
         const telefonoCobranza = document.getElementById('telefono-cobranza').value;
-        
         const requiredFieldsValid = numeroCuenta && clabe && telefonoCobranza;
-        
         if (requiredFieldsValid) {
             this.validateBankingData();
         } else {
@@ -196,11 +239,9 @@ class FormHandler {
         }
     }
 
-    // Handle banking input (números de cuenta)
     handleBankingInput(event) {
         const input = event.target;
         let value = input.value.replace(/\D/g, '');
-        
         if (input.id === 'numero-cuenta') {
             value = value.slice(0, 20);
             this.bankingData.numeroCuenta = value;
@@ -208,7 +249,6 @@ class FormHandler {
         input.value = value;
     }
 
-    // Handle CLABE input with formatting
     handleClabeInput(event) {
         const input = event.target;
         let value = input.value.replace(/\D/g, '');
@@ -220,7 +260,6 @@ class FormHandler {
         input.classList.toggle('invalid', value.length > 0 && !isValid);
     }
 
-    // Validate banking data against OCR
     async validateBankingData() {
         const numeroCuenta = document.getElementById('numero-cuenta').value;
         const clabe = document.getElementById('clabe').value;
@@ -239,7 +278,6 @@ class FormHandler {
         
         try {
             const validation = window.ocrProcessor.validateBankingInfo(numeroCuenta, clabe);
-            
             this.updateBankingValidation('cuenta', validation.details.numeroCuenta);
             this.updateBankingValidation('clabe', validation.details.clabe);
             this.updateBankingValidation('banco', { valid: !!validation.bankName, bankName: validation.bankName });
@@ -258,7 +296,6 @@ class FormHandler {
                 this.validationStatus.banking = false;
                 this.disableBankingNextButton();
             }
-            
         } catch (error) {
             console.error('Error validating banking data:', error);
             this.showBankingOverallValidation('error', 'Error al validar la información bancaria.');
@@ -272,7 +309,6 @@ class FormHandler {
         return /^\d{10,}$/.test(cleanPhone);
     }
 
-    // Show banking validation results section
     showBankingValidationResults() {
         const resultsDiv = document.getElementById('banking-validation-results');
         if (resultsDiv) {
@@ -290,11 +326,9 @@ class FormHandler {
         }
     }
 
-    // Update individual banking validation item
     updateBankingValidation(type, result) {
         const item = document.getElementById(`${type}-validation`);
         if (!item) return;
-        
         let icon, message, className;
         
         if (type === 'banco') {
@@ -320,12 +354,10 @@ class FormHandler {
                 className = 'error';
             }
         }
-        
         item.className = `validation-item ${className}`;
         item.innerHTML = `<i class="fas ${icon}"></i><span>${message}</span>`;
     }
 
-    // Show banking overall validation
     showBankingOverallValidation(status, message) {
         const overallDiv = document.getElementById('banking-overall-validation');
         if (overallDiv) {
@@ -339,29 +371,25 @@ class FormHandler {
         const nextBtn = document.getElementById('banking-next-btn');
         if (nextBtn) nextBtn.disabled = false;
     }
-
     disableBankingNextButton() {
         const nextBtn = document.getElementById('banking-next-btn');
         if (nextBtn) nextBtn.disabled = true;
     }
 
-    // Legacy methods for compatibility
     enableFinishButton() { this.enableBankingNextButton(); }
     disableFinishButton() { this.disableBankingNextButton(); }
 
-    // Handle declaration checkbox change
     handleDeclarationChange(event) {
         const continueBtn = document.getElementById('continue-btn');
         if (continueBtn) continueBtn.disabled = !event.target.checked;
     }
 
-    // Trigger file upload
     triggerFileUpload(type) {
         const fileInput = document.getElementById(`${type}-file`);
         if (fileInput) fileInput.click();
     }
 
-    // Handle file upload
+    // ------- aquí forzamos revalidación en cada subida -------
     async handleFileUpload(type, input) {
         const file = input.files[0];
         if (!file) return;
@@ -373,17 +401,17 @@ class FormHandler {
             return;
         }
 
+        // Limpia estado y muestra "revalidando"
+        this.resetValidationFor(type);
         this.showLoading();
 
         try {
             this.uploadedFiles[type] = file;
             this.showFileInfo(type, file);
 
-            // Procesar (ahora CSF/Opinión llaman SAT y suben; bancario hace OCR)
             if (['opinion', 'constancia', 'bancario'].includes(type)) {
                 const extractedData = await window.ocrProcessor.processPDF(file, type);
 
-                // Validaciones ajustadas al nuevo flujo
                 switch (type) {
                     case 'opinion':
                         this.validateOpinionDocument(extractedData);
@@ -398,7 +426,7 @@ class FormHandler {
             }
 
             this.updateUploadAreaAppearance(type, 'uploaded');
-            this.checkOverallValidation();
+            await this.revalidateAll(type); // 🔁 siempre re-ejecuta validaciones
 
         } catch (error) {
             console.error('Error processing file:', error);
@@ -406,7 +434,6 @@ class FormHandler {
             this.uploadedFiles[type] = null;
             this.updateUploadAreaAppearance(type, 'error');
 
-            // ⚠️ Candado persistente si proviene de validación SAT (69-B, mismatch, no positiva, etc.)
             const msg = (error && (error.message || error.toString())) || '';
             if (error.reason || /69-?B/i.test(msg) || /RFC.*no coinciden/i.test(msg) || /no es POSITIVA/i.test(msg)) {
                 this.forceManualReview = true;
@@ -417,9 +444,9 @@ class FormHandler {
             this.hideLoading();
         }
     }
+    // ---------------------------------------------------------
 
-    // Validate uploaded file
-    validateFile(file, type) {
+    validateFile(file) {
         if (file.type !== 'application/pdf') {
             return { valid: false, error: 'El archivo debe ser un PDF' };
         }
@@ -431,25 +458,17 @@ class FormHandler {
     }
 
     // ====== VALIDACIONES NUEVAS (no bloquear por fechas en SAT) ======
-
-    // Validate opinion document (solo POSITIVO; nombre/fecha no obligatorios)
     validateOpinionDocument(data) {
         const errors = [];
-
-        // Si ya hay constancia, rellenamos nombre si vino vacío
         if (!data.companyName && window.ocrProcessor?.documentData?.constancia?.companyName) {
             data.companyName = window.ocrProcessor.documentData.constancia.companyName;
         }
-
         if ((data.sentiment || '').toUpperCase() !== 'POSITIVO') {
             errors.push('La opinión debe ser POSITIVA');
         }
-
-        // La fecha puede venir nula desde SAT -> no bloquear
         if (data.emissionDate) {
             const daysDiff = (new Date() - data.emissionDate) / (1000 * 60 * 60 * 24);
             if (daysDiff > 90) {
-                // Si quieres avisar (no bloquear), lo tratamos como warning visual
                 const v = document.getElementById('opinion-validation');
                 if (v) {
                     v.className = 'validation-status warning';
@@ -458,7 +477,6 @@ class FormHandler {
                 }
             }
         }
-
         if (errors.length > 0) {
             this.showValidationStatus('opinion', 'error', errors.join('. '));
             this.validationStatus.opinion = false;
@@ -468,18 +486,14 @@ class FormHandler {
         }
     }
 
-    // Validate constancia document (RFC + nombre; fecha opcional)
     validateConstanciaDocument(data) {
         const errors = [];
-        
         if (!data.companyName) errors.push('No se pudo extraer la razón social');
         if (!data.rfc) errors.push('No se pudo extraer el RFC');
 
-        // La fecha de emisión puede no venir desde SAT → no bloquear
         if (data.emissionDate) {
             const daysDiff = (new Date() - data.emissionDate) / (1000 * 60 * 60 * 24);
             if (daysDiff > 30) {
-                // Advertencia no bloqueante
                 const v = document.getElementById('constancia-validation');
                 if (v) {
                     v.className = 'validation-status warning';
@@ -498,7 +512,6 @@ class FormHandler {
         }
     }
 
-    // Validate bancario document (igual que antes)
     validateBancarioDocument(data) {
         const errors = [];
         if (!data.companyName) errors.push('No se pudo extraer el nombre de la empresa');
@@ -511,13 +524,11 @@ class FormHandler {
         }
     }
 
-    // Show file information
     showFileInfo(type, file) {
         const fileInfoDiv = document.getElementById(`${type}-info`);
         if (fileInfoDiv) {
             const fileName = file.name.length > 30 ? file.name.substring(0, 30) + '...' : file.name;
             const fileSize = (file.size / 1024 / 1024).toFixed(2);
-            
             fileInfoDiv.innerHTML = `
                 <div class="file-name">${fileName}</div>
                 <div class="file-size">${fileSize} MB</div>
@@ -526,7 +537,6 @@ class FormHandler {
         }
     }
 
-    // Show file error
     showFileError(type, error) {
         const validationDiv = document.getElementById(`${type}-validation`);
         if (validationDiv) {
@@ -537,20 +547,17 @@ class FormHandler {
         this.updateUploadAreaAppearance(type, 'error');
     }
 
-    // Show validation status
     showValidationStatus(type, status, message) {
         const validationDiv = document.getElementById(`${type}-validation`);
         if (validationDiv) {
             const icon = status === 'success' ? 'fa-check-circle' : 
-                        status === 'error' ? 'fa-times-circle' : 'fa-exclamation-triangle';
-            
+                         status === 'error' ? 'fa-times-circle' : 'fa-exclamation-triangle';
             validationDiv.className = `validation-status ${status}`;
             validationDiv.innerHTML = `<i class="fas ${icon}"></i> ${message}`;
             validationDiv.style.display = 'block';
         }
     }
 
-    // Update upload area appearance
     updateUploadAreaAppearance(type, status) {
         const uploadDiv = document.querySelector(`#${type}-file`).closest('.document-upload');
         if (uploadDiv) {
@@ -558,11 +565,9 @@ class FormHandler {
         }
     }
 
-    // ========================================
-    // Check overall validation con flujo de revisión manual
-    // ========================================
+    // =================== Overall validation ===================
     checkOverallValidation() {
-        // 🔒 Si ya falló la validación SAT (candado activado), mantener siempre revisión manual
+        // Si hay candado activo por fallo SAT, mantener revisión manual
         if (this.forceManualReview) {
             const baseMsg = this.pairFailureMsg || 'Validación SAT rechazada. Continúe con Revisión manual.';
             this.showOverallValidation('error', baseMsg);
@@ -571,33 +576,29 @@ class FormHandler {
         }
 
         const hasRequiredFiles = this.uploadedFiles.opinion && 
-                                this.uploadedFiles.constancia && 
-                                this.uploadedFiles.bancario;
-        
+                                 this.uploadedFiles.constancia && 
+                                 this.uploadedFiles.bancario;
         const hasValidDocuments = this.validationStatus.opinion && 
-                                 this.validationStatus.constancia && 
-                                 this.validationStatus.bancario;
+                                  this.validationStatus.constancia && 
+                                  this.validationStatus.bancario;
 
         if (hasRequiredFiles && hasValidDocuments) {
             const crossValidation = window.ocrProcessor.validateDocuments();
-            const pairOK = window.ocrProcessor?.satPairVerified === true; // ✅ exigir validación cruzada OK
+            const pairOK = window.ocrProcessor?.satPairVerified === true;
 
             if (pairOK &&
                 crossValidation.companyNameMatch && 
                 crossValidation.positiveOpinion && 
                 crossValidation.dateValid) {
-                
                 this.showOverallValidation('success', 'Todos los documentos son válidos. Puede continuar al siguiente paso.');
                 this.enableNextStep();
                 this.switchToNormalFlow();
-                
             } else {
                 const errors = [];
                 if (!pairOK) errors.push('Validación cruzada SAT (RFC/69-B) no superada');
                 if (!crossValidation.companyNameMatch) errors.push('Los nombres de empresa no coinciden entre documentos');
                 if (!crossValidation.positiveOpinion) errors.push('La opinión de cumplimiento debe ser POSITIVA');
                 if (!crossValidation.dateValid) errors.push('La fecha de emisión de la constancia excede 30 días');
-
                 this.showOverallValidation('error', `Errores encontrados: ${errors.join('. ')}`);
                 this.switchToManualReviewFlow();
             }
@@ -609,11 +610,9 @@ class FormHandler {
         }
     }
 
-    // Cambiar a flujo de revisión manual
     switchToManualReviewFlow() {
         console.log('Cambiando a flujo de revisión manual...');
         this.isManualReviewFlow = true;
-        
         const nextBtn = document.getElementById('next-step-btn');
         if (nextBtn) {
             nextBtn.innerHTML = '<i class="fas fa-user"></i> Datos de Contacto';
@@ -627,11 +626,9 @@ class FormHandler {
         this.saveStateForContactOnly();
     }
 
-    // Cambiar a flujo normal
     switchToNormalFlow() {
         console.log('Usando flujo normal de registro...');
         this.isManualReviewFlow = false;
-        
         const nextBtn = document.getElementById('next-step-btn');
         if (nextBtn) {
             nextBtn.innerHTML = 'Siguiente: Información de la Empresa <i class="fas fa-arrow-right"></i>';
@@ -642,7 +639,6 @@ class FormHandler {
         this.hideManualReviewMessage();
     }
 
-    // Mensaje de revisión manual
     showManualReviewMessage() {
         this.hideManualReviewMessage();
         const overallDiv = document.getElementById('overall-validation');
@@ -663,49 +659,29 @@ class FormHandler {
             overallDiv.parentNode.insertBefore(messageDiv, overallDiv.nextSibling);
         }
     }
-    hideManualReviewMessage() {
-        const existingMessage = document.getElementById('manual-review-message');
-        if (existingMessage) existingMessage.remove();
-    }
+    hideManualReviewMessage() { const m = document.getElementById('manual-review-message'); if (m) m.remove(); }
     addManualReviewStyles() {
         if (document.getElementById('manual-review-styles')) return;
         const styles = document.createElement('style');
         styles.id = 'manual-review-styles';
         styles.textContent = `
-            .manual-review-notice {
-                background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-                border: 1px solid #f59e0b;
-                border-radius: 8px;
-                padding: 1.5rem;
-                margin: 1rem 0;
-                animation: slideInDown 0.3s ease-out;
-            }
+            .manual-review-notice { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border: 1px solid #f59e0b; border-radius: 8px; padding: 1.5rem; margin: 1rem 0; animation: slideInDown 0.3s ease-out; }
             .manual-review-content { display: flex; align-items: flex-start; gap: 1rem; }
             .manual-review-content i { color: #d97706; font-size: 1.5rem; margin-top: 0.25rem; flex-shrink: 0; }
             .manual-review-text h4 { margin: 0 0 0.5rem 0; color: #92400e; font-size: 1.1rem; font-weight: 600; }
             .manual-review-text p { margin: 0; color: #78350f; line-height: 1.5; font-size: 0.95rem; }
             .btn-warning { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; }
-            .btn-warning:hover:not(:disabled) {
-                background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
-                transform: translateY(-1px);
-                box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
-            }
-            @keyframes slideInDown {
-                from { opacity: 0; transform: translateY(-20px); }
-                to { opacity: 1; transform: translateY(0); }
-            }
+            .btn-warning:hover:not(:disabled) { background: linear-gradient(135deg, #d97706 0%, #b45309 100%); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3); }
+            @keyframes slideInDown { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
         `;
         document.head.appendChild(styles);
     }
 
-    // Guardar estado para formulario de contacto
     async saveStateForContactOnly() {
         try {
             const filesToSave = {};
             for (const [type, file] of Object.entries(this.uploadedFiles)) {
-                if (file && file instanceof File) {
-                    filesToSave[type] = await this.fileToSerializable(file);
-                }
+                if (file && file instanceof File) filesToSave[type] = await this.fileToSerializable(file);
             }
             sessionStorage.setItem('uploadedFiles', JSON.stringify(filesToSave));
             sessionStorage.setItem('uploadedUrls', JSON.stringify(this.uploadedUrls || {}));
@@ -719,14 +695,12 @@ class FormHandler {
         }
     }
 
-    // Redireccionar al formulario de contacto
     redirectToContactOnly() {
         console.log('Redirigiendo a formulario de contacto...');
         this.saveStateForContactOnly();
         window.location.href = '../view/contact-only.html';
     }
 
-    // Show overall validation message
     showOverallValidation(status, message) {
         const overallDiv = document.getElementById('overall-validation');
         if (overallDiv) {
@@ -736,37 +710,24 @@ class FormHandler {
         }
     }
 
-    // Enable/Disable next step (respetando flujo manual)
     enableNextStep() {
         const nextBtn = document.getElementById('next-step-btn');
-        if (nextBtn && !nextBtn.classList.contains('manual-review-btn')) {
-            nextBtn.disabled = false;
-        }
+        if (nextBtn && !nextBtn.classList.contains('manual-review-btn')) nextBtn.disabled = false;
     }
     disableNextStep() {
         const nextBtn = document.getElementById('next-step-btn');
-        if (nextBtn && !nextBtn.classList.contains('manual-review-btn')) {
-            nextBtn.disabled = true;
-        }
+        if (nextBtn && !nextBtn.classList.contains('manual-review-btn')) nextBtn.disabled = true;
     }
 
-    // Show company information step
     showCompanyInfo() {
-        // 🚫 No permitir flujo normal si hay candado o si el par no está verificado
         if (this.forceManualReview || window.ocrProcessor?.satPairVerified !== true) {
             this.switchToManualReviewFlow();
             const msg = this.pairFailureMsg || 'Validación SAT pendiente o rechazada. Continúe con Revisión manual.';
             this.showOverallValidation('error', msg);
             return;
         }
-
-        const hasValidDocuments = this.validationStatus.opinion && 
-                                 this.validationStatus.constancia && 
-                                 this.validationStatus.bancario;
-        if (!hasValidDocuments) {
-            console.log('Documentos no válidos, no se puede continuar al flujo normal');
-            return;
-        }
+        const hasValidDocuments = this.validationStatus.opinion && this.validationStatus.constancia && this.validationStatus.bancario;
+        if (!hasValidDocuments) return;
         this.fillCompanyForm();
         document.getElementById('documents-step').classList.remove('active');
         document.getElementById('company-step').classList.add('active');
@@ -774,7 +735,6 @@ class FormHandler {
         this.currentStep = 'company';
     }
 
-    // Show banking information step
     showBankingInfo() {
         document.getElementById('company-step').classList.remove('active');
         document.getElementById('banking-step').classList.add('active');
@@ -783,7 +743,6 @@ class FormHandler {
         this.currentStep = 'banking';
     }
 
-    // Show contact information step
     showContactInfo() {
         document.getElementById('banking-step').classList.remove('active');
         document.getElementById('contact-step').classList.add('active');
@@ -792,7 +751,6 @@ class FormHandler {
         this.currentStep = 'contact';
     }
 
-    // Show commercial conditions step
     showCommercialConditions() {
         document.getElementById('contact-step').classList.remove('active');
         document.getElementById('commercial-step').classList.add('active');
@@ -801,7 +759,6 @@ class FormHandler {
         this.currentStep = 'commercial';
     }
 
-    // Show documents step (navegación)
     showDocuments() {
         if (this.currentStep === 'company') {
             document.getElementById('company-step').classList.remove('active');
@@ -826,7 +783,6 @@ class FormHandler {
         }
     }
 
-    // Fill company form with data de la CSF (SAT)
     fillCompanyForm() {
         const companyInfo = window.ocrProcessor.getCompanyInfo();
         Object.keys(companyInfo).forEach(field => {
@@ -835,7 +791,6 @@ class FormHandler {
         });
     }
 
-    // Map field names to form IDs
     mapFieldToId(field) {
         const mapping = {
             nombreComercial: 'nombre-comercial',
@@ -853,7 +808,6 @@ class FormHandler {
         return mapping[field] || field;
     }
 
-    // Update progress bar
     updateProgress(percentage, text) {
         const progressFill = document.getElementById('progress-fill');
         const progressText = document.getElementById('progress-text');
@@ -861,7 +815,6 @@ class FormHandler {
         if (progressText) progressText.textContent = text;
     }
 
-    // Submit form
     async submitForm() {
         try {
             this.showLoading();
@@ -877,7 +830,6 @@ class FormHandler {
         }
     }
 
-    // Collect form data
     collectFormData() {
         const formData = {};
         
@@ -931,30 +883,23 @@ class FormHandler {
         }
                 
         formData.bankingData = { ...this.bankingData };
-        
         formData.submissionDate = new Date().toISOString();
         formData.status = 'pending';
         formData.validationResults = window.ocrProcessor?.getValidationSummary?.() || (window.ocrProcessor?.validationResults || {});
         formData.bankingValidation = this.validationStatus.banking;
         formData.commercialValidation = this.validationStatus.commercial;
-
-        // Marcar el flujo por si te sirve en backend
         formData.submissionType = this.isManualReviewFlow ? 'manual-review' : 'normal';
 
         Object.keys(formData).forEach(key => {
             if (key === '' || key.trim() === '') delete formData[key];
         });
-        
         return formData;
     }
 
-    // Upload files a Storage (reutiliza URLs ya subidas por ocr-processor)
-    // form-handler.js
     async uploadFilesToStorage() {
         const storage = firebase.storage();
         const fileUrls = {};
 
-        // Reutiliza el mismo submissionId de la sesión
         let submissionId = sessionStorage.getItem('submissionId');
         if (!submissionId) {
             submissionId = `sub-${Date.now()}`;
@@ -969,13 +914,10 @@ class FormHandler {
 
         for (const [type, file] of Object.entries(this.uploadedFiles)) {
             if (!file) continue;
-
             const standardFileName = fileNameMapping[type] || `${type}.pdf`;
             const storageRef = storage.ref(`suppliers/${submissionId}/${standardFileName}`);
-
             const metadata = { contentType: 'application/pdf' };
             await storageRef.put(file, metadata);
-
             fileUrls[type] = await storageRef.getDownloadURL();
         }
         return fileUrls;
@@ -999,7 +941,6 @@ class FormHandler {
         });
     }
 
-    // Save to Firestore
     async saveToFirestore(formData, fileUrls) {
         const db = window.firebaseDB;
         const supplierData = {
@@ -1011,7 +952,6 @@ class FormHandler {
         await db.collection('suppliers').add(supplierData);
     }
 
-    // Show success message
     showSuccessMessage() {
         const formCard = document.querySelector('.form-card');
         formCard.innerHTML = `
@@ -1027,7 +967,6 @@ class FormHandler {
         `;
     }
 
-    // Show error message
     showErrorMessage(message) {
         const errorDiv = document.createElement('div');
         errorDiv.className = 'error-message';
@@ -1040,7 +979,6 @@ class FormHandler {
         setTimeout(() => { errorDiv.remove(); }, 5000);
     }
 
-    // Loading overlay
     showLoading() {
         const loadingOverlay = document.getElementById('loading-overlay');
         if (loadingOverlay) {
@@ -1062,7 +1000,6 @@ class FormHandler {
     preventModalClose(event) { event.preventDefault(); event.stopPropagation(); return false; }
     preventEscapeClose(event) { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); return false; } }
 
-    // Reset form
     reset() {
         this.uploadedFiles = { opinion: null, constancia: null, bancario: null };
         this.uploadedUrls = { opinion: null, constancia: null, bancario: null };
@@ -1074,12 +1011,12 @@ class FormHandler {
         };
         this.currentStep = 'documents';
         this.isManualReviewFlow = false;
-        this.forceManualReview = false;   // limpiar candado
+        this.forceManualReview = false;
         this.pairFailureMsg = '';
 
-        if (window.ocrProcessor) window.ocrProcessor.reset();
-        if (window.contactStepHandler) window.contactStepHandler.clearContactForm?.();
-        if (window.commercialConditionsHandler) window.commercialConditionsHandler.clearCommercialForm?.();
+        if (window.ocrProcessor) window.ocrProcessor.reset?.();
+        window.contactStepHandler?.clearContactForm?.();
+        window.commercialConditionsHandler?.clearCommercialForm?.();
 
         ['company-step', 'banking-step', 'contact-step', 'commercial-step'].forEach(stepId => {
             const step = document.getElementById(stepId);
@@ -1108,7 +1045,7 @@ class FormHandler {
 // Create global instance
 window.formHandler = new FormHandler();
 
-// Global functions for HTML onclick events
+// Global functions para HTML
 window.triggerFileUpload = (type) => window.formHandler.triggerFileUpload(type);
 window.handleFileUpload = (type, input) => window.formHandler.handleFileUpload(type, input);
 window.showCompanyInfo = () => window.formHandler.showCompanyInfo();
@@ -1121,7 +1058,7 @@ window.submitForm = () => window.formHandler.submitForm();
 // Navegación con validación
 window.proceedToCommercialConditions = () => {
     if (window.contactStepHandler && !window.contactStepHandler.validateAllContactFields()) {
-        if (window.portalApp) window.portalApp.showErrorMessage('Por favor complete todos los campos requeridos del formulario de contacto.');
+        window.portalApp?.showErrorMessage('Por favor complete todos los campos requeridos del formulario de contacto.');
         return;
     }
     window.formHandler.showCommercialConditions();
@@ -1129,7 +1066,7 @@ window.proceedToCommercialConditions = () => {
 
 window.proceedToSubmissionFromCommercial = () => {
     if (window.commercialConditionsHandler && !window.commercialConditionsHandler.validateAllCommercialFields()) {
-        if (window.portalApp) window.portalApp.showErrorMessage('Por favor complete todos los campos requeridos del formulario de condiciones comerciales.');
+        window.portalApp?.showErrorMessage('Por favor complete todos los campos requeridos del formulario de condiciones comerciales.');
         return;
     }
     window.formHandler.submitForm();
