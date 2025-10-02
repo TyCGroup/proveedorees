@@ -1,5 +1,4 @@
 // JS/contact-only-handler.js - Manejador del formulario de contacto simplificado
-
 class ContactOnlyHandler {
     constructor() {
         this.formData = {
@@ -14,125 +13,118 @@ class ContactOnlyHandler {
             contactPhone: false,
             contactEmail: false
         };
-        this.uploadedFiles = {
-            opinion: null,
-            constancia: null,
-            bancario: null
-        };
-        this.originalFileUrls = {};
+        this.uploadedFiles = { opinion: null, constancia: null, bancario: null };
+        this.uploadedUrls  = { opinion: null, constancia: null, bancario: null }; // ⬅️ NUEVO
         this.initialized = false;
     }
 
-    // Inicializar el manejador
-    init() {
+    // === INIT ==========================================================
+    async init() {
         if (this.initialized) return;
-        
         console.log('Inicializando ContactOnlyHandler...');
-        this.loadDocumentsFromSessionStorage();
+        await this.loadDocumentsFromSessionStorage();   // ahora es async
         this.setupEventListeners();
         this.renderDocumentsSummary();
         this.initialized = true;
         console.log('ContactOnlyHandler inicializado correctamente');
     }
 
-    // Cargar documentos desde sessionStorage - CORREGIDO
-    loadDocumentsFromSessionStorage() {
+    // === SESSION LOAD ==================================================
+    async loadDocumentsFromSessionStorage() {
         try {
-            // Cargar archivos subidos
+            // 1) Archivos serializados
             const storedFiles = sessionStorage.getItem('uploadedFiles');
             if (storedFiles) {
                 const filesData = JSON.parse(storedFiles);
-                console.log('Datos de archivos desde sessionStorage:', filesData);
-                
-                // Verificar si los archivos están como objetos File o como data URLs
                 for (const [type, fileData] of Object.entries(filesData)) {
-                    if (fileData) {
-                        console.log(`Archivo ${type}:`, {
-                            name: fileData.name,
-                            size: fileData.size,
-                            type: fileData.type,
-                            hasArrayBuffer: fileData.arrayBuffer ? 'Sí' : 'No',
-                            hasDataURL: fileData.dataURL ? 'Sí' : 'No'
-                        });
-                        
-                        // Si tenemos dataURL, reconstruir el File
-                        if (fileData.dataURL && !fileData.arrayBuffer) {
-                            this.uploadedFiles[type] = this.dataURLToFile(fileData.dataURL, fileData.name, fileData.type);
-                        } else if (fileData.arrayBuffer) {
-                            // Si tenemos arrayBuffer, reconstruir el File
-                            const uint8Array = new Uint8Array(fileData.arrayBuffer);
-                            this.uploadedFiles[type] = new File([uint8Array], fileData.name, { type: fileData.type });
-                        } else if (fileData instanceof File) {
-                            // Si ya es un File object
-                            this.uploadedFiles[type] = fileData;
-                        } else {
-                            console.warn(`Archivo ${type} no tiene datos válidos:`, fileData);
-                        }
+                    if (!fileData) continue;
+                    if (fileData.dataURL) {
+                        this.uploadedFiles[type] = this.dataURLToFile(fileData.dataURL, fileData.name, fileData.type);
+                    } else if (fileData.arrayBuffer) {
+                        const uint8Array = new Uint8Array(fileData.arrayBuffer);
+                        this.uploadedFiles[type] = new File([uint8Array], fileData.name, { type: fileData.type || 'application/pdf' });
                     }
                 }
-                
-                console.log('Archivos reconstruidos:', Object.keys(this.uploadedFiles));
-            } else {
-                console.log('No se encontraron archivos en sessionStorage');
             }
 
-            // Cargar información extraída de documentos
+            // 2) URLs originales (subidas por ocr-processor)  ⬅️ NUEVO
+            const storedUrls = sessionStorage.getItem('uploadedUrls');
+            if (storedUrls) {
+                this.uploadedUrls = JSON.parse(storedUrls);
+            }
+
+            // 3) Si no hay File pero sí URL, descargar y reconstruir File  ⬅️ NUEVO
+            for (const type of ['opinion','constancia','bancario']) {
+                if (!this.uploadedFiles[type] && this.uploadedUrls[type]) {
+                    try {
+                        this.uploadedFiles[type] = await this.fetchFileFromUrl(
+                            this.uploadedUrls[type],
+                            this.defaultFileName(type)
+                        );
+                        console.log(`Reconstruido ${type} desde URL.`);
+                    } catch (e) {
+                        console.warn(`No se pudo descargar ${type} desde URL, se enviará como URL:`, e);
+                    }
+                }
+            }
+
+            // 4) Nombre de empresa extraído (si existe)
             const storedCompanyInfo = sessionStorage.getItem('extractedCompanyInfo');
             if (storedCompanyInfo) {
                 const companyInfo = JSON.parse(storedCompanyInfo);
                 this.prefillCompanyName(companyInfo);
             }
-
         } catch (error) {
             console.error('Error cargando datos desde sessionStorage:', error);
         }
     }
 
-    // Función auxiliar para convertir dataURL a File
+    // === HELPERS FILE/URL =============================================
     dataURLToFile(dataURL, fileName, mimeType) {
         try {
             const arr = dataURL.split(',');
-            const mime = arr[0].match(/:(.*?);/)[1];
-            const bstr = atob(arr[1]);
-            let n = bstr.length;
+            const mime = mimeType || arr[0].match(/:(.*?);/)[1] || 'application/pdf';
+            const bstr = atob(arr[1]); let n = bstr.length;
             const u8arr = new Uint8Array(n);
-            
-            while (n--) {
-                u8arr[n] = bstr.charCodeAt(n);
-            }
-            
-            return new File([u8arr], fileName, { type: mimeType || mime });
+            while (n--) u8arr[n] = bstr.charCodeAt(n);
+            return new File([u8arr], fileName || 'archivo.pdf', { type: mime });
         } catch (error) {
             console.error('Error convirtiendo dataURL a File:', error);
             return null;
         }
     }
 
-    // Pre-llenar el nombre de la empresa si está disponible
+    async fetchFileFromUrl(url, filename = 'archivo.pdf') {
+        const res = await fetch(url, { mode: 'cors' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        return new File([blob], filename, { type: blob.type || 'application/pdf' });
+    }
+
+    defaultFileName(type) {
+        return ({ opinion: '32D.pdf', constancia: 'CSF.pdf', bancario: 'EDO.CTA.pdf' }[type]) || `${type}.pdf`;
+    }
+
+    // === UI / VALIDACIÓN CAMPOS =======================================
     prefillCompanyName(companyInfo) {
         const companyNameInput = document.getElementById('company-name');
-        if (companyNameInput && companyInfo.nombreComercial) {
+        if (companyNameInput && companyInfo?.nombreComercial) {
             companyNameInput.value = companyInfo.nombreComercial;
             this.formData.companyName = companyInfo.nombreComercial;
             this.validateField('company-name');
         }
     }
 
-    // Configurar event listeners
     setupEventListeners() {
         const form = document.getElementById('contact-only-form');
-        if (form) {
-            form.addEventListener('submit', this.handleFormSubmit.bind(this));
-        }
+        if (form) form.addEventListener('submit', this.handleFormSubmit.bind(this));
 
-        // Event listeners para validación en tiempo real
         const inputs = [
             { id: 'company-name', handler: this.handleCompanyNameInput.bind(this) },
             { id: 'contact-name', handler: this.handleContactNameInput.bind(this) },
             { id: 'contact-phone', handler: this.handlePhoneInput.bind(this) },
             { id: 'contact-email', handler: this.handleEmailInput.bind(this) }
         ];
-
         inputs.forEach(({ id, handler }) => {
             const input = document.getElementById(id);
             if (input) {
@@ -142,579 +134,246 @@ class ContactOnlyHandler {
         });
     }
 
-    // Manejar entrada del nombre de empresa
-    handleCompanyNameInput(event) {
-        const input = event.target;
-        let value = input.value;
+    handleCompanyNameInput(e){ let v=e.target.value; v=v.replace(/[^a-zA-ZÀ-ÿ\u00f1\u00d1\s\d\.\,\(\)\&\-]/g,'').replace(/^\s+/,'').replace(/\s{2,}/g,' '); e.target.value=v; this.formData.companyName=v; }
+    handleContactNameInput(e){ let v=e.target.value; v=v.replace(/[^a-zA-ZÀ-ÿ\u00f1\u00d1\s\-]/g,'').replace(/^\s+/,'').replace(/\s{2,}/g,' '); e.target.value=v; this.formData.contactName=v; }
+    handlePhoneInput(e){ let v=e.target.value.replace(/[^\d\s\-]/g,'').replace(/\D/g,''); if(v.length>=2) v=v.substring(0,2)+' '+v.substring(2); if(v.length>=7) v=v.substring(0,7)+' '+v.substring(7,11); e.target.value=v; this.formData.contactPhone=v; }
+    handleEmailInput(e){ const v=e.target.value.toLowerCase().trim(); e.target.value=v; this.formData.contactEmail=v; }
 
-        // Permitir letras, números, espacios, acentos y algunos símbolos comunes
-        value = value.replace(/[^a-zA-ZÀ-ÿ\u00f1\u00d1\s\d\.\,\(\)\&\-]/g, '');
-        value = value.replace(/^\s+/, ''); // No espacios al inicio
-        value = value.replace(/\s{2,}/g, ' '); // No múltiples espacios
-
-        input.value = value;
-        this.formData.companyName = value;
-    }
-
-    // Manejar entrada del nombre de contacto
-    handleContactNameInput(event) {
-        const input = event.target;
-        let value = input.value;
-
-        // Solo letras, espacios, acentos y guiones
-        value = value.replace(/[^a-zA-ZÀ-ÿ\u00f1\u00d1\s\-]/g, '');
-        value = value.replace(/^\s+/, ''); // No espacios al inicio
-        value = value.replace(/\s{2,}/g, ' '); // No múltiples espacios
-
-        input.value = value;
-        this.formData.contactName = value;
-    }
-
-    // Manejar entrada de teléfono
-    handlePhoneInput(event) {
-        const input = event.target;
-        let value = input.value;
-
-        // Solo números, espacios y guiones
-        value = value.replace(/[^\d\s\-]/g, '');
-        
-        // Formatear automáticamente (55 1234 5678)
-        value = value.replace(/\D/g, ''); // Solo números
-        if (value.length >= 2) {
-            value = value.substring(0, 2) + ' ' + value.substring(2);
+    validateField(fieldId){
+        const input=document.getElementById(fieldId); if(!input) return false;
+        const value=input.value.trim(); let isValid=false; let message='';
+        switch(fieldId){
+            case 'company-name': isValid=value.length>=3; message=isValid?'':'El nombre debe tener al menos 3 caracteres'; this.validationStatus.companyName=isValid; break;
+            case 'contact-name': isValid=value.length>=2; message=isValid?'':'El nombre debe tener al menos 2 caracteres'; this.validationStatus.contactName=isValid; break;
+            case 'contact-phone': { const digits=value.replace(/\D/g,''); isValid=digits.length>=10; message=isValid?'':'El teléfono debe tener al menos 10 dígitos'; this.validationStatus.contactPhone=isValid; break; }
+            case 'contact-email': isValid=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value); message=isValid?'':'El formato del email no es válido'; this.validationStatus.contactEmail=isValid; break;
         }
-        if (value.length >= 7) {
-            value = value.substring(0, 7) + ' ' + value.substring(7, 11);
-        }
-
-        input.value = value;
-        this.formData.contactPhone = value;
-    }
-
-    // Manejar entrada de email
-    handleEmailInput(event) {
-        const input = event.target;
-        let value = input.value.toLowerCase().trim();
-        
-        input.value = value;
-        this.formData.contactEmail = value;
-    }
-
-    // Validar campo individual
-    validateField(fieldId) {
-        const input = document.getElementById(fieldId);
-        if (!input) return false;
-
-        const value = input.value.trim();
-        let isValid = false;
-        let message = '';
-
-        switch (fieldId) {
-            case 'company-name':
-                if (!value) {
-                    message = 'El nombre de la empresa es requerido';
-                } else if (value.length < 3) {
-                    message = 'El nombre debe tener al menos 3 caracteres';
-                } else {
-                    isValid = true;
-                }
-                this.validationStatus.companyName = isValid;
-                break;
-
-            case 'contact-name':
-                if (!value) {
-                    message = 'El nombre del contacto es requerido';
-                } else if (value.length < 2) {
-                    message = 'El nombre debe tener al menos 2 caracteres';
-                } else {
-                    isValid = true;
-                }
-                this.validationStatus.contactName = isValid;
-                break;
-
-            case 'contact-phone':
-                const phoneNumbers = value.replace(/\D/g, '');
-                if (!value) {
-                    message = 'El teléfono es requerido';
-                } else if (phoneNumbers.length < 10) {
-                    message = 'El teléfono debe tener al menos 10 dígitos';
-                } else {
-                    isValid = true;
-                }
-                this.validationStatus.contactPhone = isValid;
-                break;
-
-            case 'contact-email':
-                if (!value) {
-                    message = 'El email es requerido';
-                } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
-                    message = 'El formato del email no es válido';
-                } else {
-                    isValid = true;
-                }
-                this.validationStatus.contactEmail = isValid;
-                break;
-        }
-
         this.showFieldValidation(input, isValid, message);
         this.updateSubmitButton();
         return isValid;
     }
-
-    // Mostrar validación visual del campo
-    showFieldValidation(input, isValid, message) {
-        // Remover clases previas
-        input.classList.remove('valid', 'invalid');
-        
-        // Agregar clase según estado
-        if (input.value.trim()) {
-            input.classList.add(isValid ? 'valid' : 'invalid');
-        }
-
-        // Mostrar/ocultar mensaje de error
-        let errorElement = input.parentNode.querySelector('.field-error');
-        
-        if (message && !isValid) {
-            if (!errorElement) {
-                errorElement = document.createElement('span');
-                errorElement.className = 'field-error';
-                input.parentNode.appendChild(errorElement);
-            }
-            errorElement.textContent = message;
-            errorElement.style.display = 'block';
-        } else if (errorElement) {
-            errorElement.style.display = 'none';
-        }
+    showFieldValidation(input,isValid,message){
+        input.classList.remove('valid','invalid');
+        if(input.value.trim()) input.classList.add(isValid?'valid':'invalid');
+        let errorEl=input.parentNode.querySelector('.field-error');
+        if(message && !isValid){ if(!errorEl){ errorEl=document.createElement('span'); errorEl.className='field-error'; input.parentNode.appendChild(errorEl);} errorEl.textContent=message; errorEl.style.display='block';}
+        else if(errorEl){ errorEl.style.display='none';}
+    }
+    updateSubmitButton(){
+        const btn=document.getElementById('submit-contact-btn');
+        if(!btn) return;
+        btn.disabled=!Object.values(this.validationStatus).every(v=>v===true);
     }
 
-    // Actualizar estado del botón de envío
-    updateSubmitButton() {
-        const submitBtn = document.getElementById('submit-contact-btn');
-        if (!submitBtn) return;
-
-        const allValid = Object.values(this.validationStatus).every(status => status === true);
-        submitBtn.disabled = !allValid;
-    }
-
-    // Renderizar resumen de documentos - MEJORADO
+    // === RESUMEN DE DOCUMENTOS ========================================
     renderDocumentsSummary() {
-        const summaryContainer = document.getElementById('documents-summary');
-        if (!summaryContainer) return;
+        const box = document.getElementById('documents-summary');
+        if (!box) return;
 
-        const documentTypes = {
-            opinion: {
-                name: 'Opinión de Cumplimiento 32D',
-                description: 'Documento de cumplimiento fiscal'
-            },
-            constancia: {
-                name: 'Constancia de Situación Fiscal',
-                description: 'Constancia del SAT'
-            },
-            bancario: {
-                name: 'Estado de Cuenta Bancario',
-                description: 'Carátula del estado de cuenta'
-            }
+        const labels = {
+            opinion:   { name:'Opinión de Cumplimiento 32D', desc:'Documento de cumplimiento fiscal' },
+            constancia:{ name:'Constancia de Situación Fiscal', desc:'Constancia del SAT' },
+            bancario:  { name:'Estado de Cuenta Bancario', desc:'Carátula del estado de cuenta' }
         };
 
         let html = '';
-        let hasDocuments = false;
+        let hasAny = false;
 
-        Object.keys(documentTypes).forEach(type => {
-            const file = this.uploadedFiles[type];
-            if (file) {
-                hasDocuments = true;
-                const doc = documentTypes[type];
-                const fileSize = this.formatFileSize(file.size);
-                
+        for (const type of ['opinion','constancia','bancario']) {
+            const f = this.uploadedFiles[type];
+            const urlOnly = !f && !!this.uploadedUrls[type];
+            if (f || urlOnly) {
+                hasAny = true;
+                const size = f ? this.formatFileSize(f.size) : 'desde URL';
                 html += `
                     <div class="document-item">
                         <div class="document-info">
-                            <div class="document-icon">
-                                <i class="fas fa-file-pdf"></i>
-                            </div>
+                            <div class="document-icon"><i class="fas fa-file-pdf"></i></div>
                             <div class="document-details">
-                                <h4>${doc.name}</h4>
-                                <p>${doc.description} - ${fileSize}</p>
+                                <h4>${labels[type].name}</h4>
+                                <p>${labels[type].desc} - ${size}</p>
                             </div>
                         </div>
-                        <div class="document-status uploaded">Subido</div>
-                    </div>
-                `;
+                        <div class="document-status uploaded">${urlOnly ? 'Adjuntado (URL)' : 'Subido'}</div>
+                    </div>`;
             }
-        });
-
-        if (!hasDocuments) {
-            html = `
-                <div class="document-item">
-                    <div class="document-info">
-                        <div class="document-icon" style="background: #ef4444;">
-                            <i class="fas fa-exclamation-triangle"></i>
-                        </div>
-                        <div class="document-details">
-                            <h4>No se encontraron documentos</h4>
-                            <p>No hay documentos cargados en la sesión actual</p>
-                        </div>
-                    </div>
-                    <div class="document-status error">Faltante</div>
-                </div>
-            `;
         }
 
-        summaryContainer.innerHTML = html;
+        if (!hasAny) {
+            html = `
+            <div class="document-item">
+                <div class="document-info">
+                    <div class="document-icon" style="background:#ef4444;"><i class="fas fa-exclamation-triangle"></i></div>
+                    <div class="document-details">
+                        <h4>No se encontraron documentos</h4>
+                        <p>No hay documentos cargados en la sesión actual</p>
+                    </div>
+                </div>
+                <div class="document-status error">Faltante</div>
+            </div>`;
+        }
+
+        box.innerHTML = html;
     }
 
-    // Manejar envío del formulario
-    async handleFormSubmit(event) {
-        event.preventDefault();
-        
-        // Validar todos los campos
-        const allFieldsValid = this.validateAllFields();
-        if (!allFieldsValid) {
-            this.showError('Por favor complete todos los campos requeridos correctamente.');
-            return;
-        }
+    // === SUBMIT ========================================================
+    async handleFormSubmit(e) {
+        e.preventDefault();
 
-        // Verificar que tenemos archivos válidos antes de continuar
-        const hasValidFiles = this.validateFiles();
-        if (!hasValidFiles) {
-            this.showError('No se pudieron cargar los archivos correctamente. Por favor, suba los documentos nuevamente.');
-            return;
+        const ok = ['company-name','contact-name','contact-phone','contact-email']
+            .map(id => this.validateField(id))
+            .every(Boolean);
+        if (!ok) return this.showError('Por favor complete todos los campos requeridos.');
+
+        if (!this.validateFiles()) {
+            return this.showError('No se pudieron preparar los documentos. Suba nuevamente los archivos.');
         }
 
         try {
             this.showLoading();
-
-            // Subir archivos a Firebase Storage
             const fileUrls = await this.uploadFilesToStorage();
-
-            // Guardar en Firestore
             await this.saveToFirestore(fileUrls);
-
-            // Mostrar éxito
             this.showSuccess();
-
-        } catch (error) {
-            console.error('Error enviando formulario:', error);
+        } catch (err) {
+            console.error('Error enviando formulario:', err);
             this.showError('Error al enviar la información. Por favor intente nuevamente.');
         } finally {
             this.hideLoading();
         }
     }
 
-    // Validar todos los campos
-    validateAllFields() {
-        const fields = ['company-name', 'contact-name', 'contact-phone', 'contact-email'];
-        let allValid = true;
-
-        fields.forEach(fieldId => {
-            if (!this.validateField(fieldId)) {
-                allValid = false;
-            }
-        });
-
-        return allValid;
-    }
-
-    // Validar que los archivos son válidos - NUEVO
     validateFiles() {
-        let hasValidFiles = false;
-        
-        for (const [type, file] of Object.entries(this.uploadedFiles)) {
-            if (file && file instanceof File && file.size > 0) {
-                hasValidFiles = true;
-                console.log(`Archivo ${type} válido:`, {
-                    name: file.name,
-                    size: file.size,
-                    type: file.type
-                });
-            } else if (file) {
-                console.warn(`Archivo ${type} inválido:`, file);
-            }
-        }
-        
-        return hasValidFiles;
+        // Consideramos válido si hay al menos un File o una URL para alguno de los 3 tipos
+        return ['opinion','constancia','bancario'].some(t => {
+            const f = this.uploadedFiles[t];
+            return (f && f instanceof File && f.size > 0) || !!this.uploadedUrls[t];
+        });
     }
 
-    // Subir archivos a Firebase Storage - MEJORADO con validación
+    // ⬇⬇⬇ Aquí reintentamos subir incluso si sólo teníamos URL
     async uploadFilesToStorage() {
-        if (!window.firebase) {
-            throw new Error('Firebase no está disponible');
-        }
-
+        if (!window.firebase) throw new Error('Firebase no está disponible');
         const storage = firebase.storage();
         const fileUrls = {};
-        
+
         const submissionId = Date.now().toString();
-        
-        const fileNameMapping = {
-            'opinion': '32D.pdf',
-            'constancia': 'CSF.pdf', 
-            'bancario': 'EDO.CTA.pdf'
-        };
-        
-        for (const [type, file] of Object.entries(this.uploadedFiles)) {
-            if (file && file instanceof File && file.size > 0) {
-                console.log(`Subiendo archivo ${type}:`, {
-                    name: file.name,
-                    size: file.size,
-                    type: file.type
-                });
-                
-                const standardFileName = fileNameMapping[type] || `${type}.pdf`;
-                const storageRef = storage.ref(`manual-review/${submissionId}/${standardFileName}`);
-                
+        const names = { opinion:'32D.pdf', constancia:'CSF.pdf', bancario:'EDO.CTA.pdf' };
+
+        for (const type of ['opinion','constancia','bancario']) {
+            let file = this.uploadedFiles[type];
+
+            // Si no hay File pero sí URL -> descargar y convertir a File
+            if ((!file || !(file instanceof File) || file.size === 0) && this.uploadedUrls[type]) {
                 try {
-                    // Subir el archivo
-                    const snapshot = await storageRef.put(file);
-                    console.log(`Archivo ${type} subido correctamente:`, snapshot.metadata);
-                    
-                    // Obtener URL de descarga
+                    file = await this.fetchFileFromUrl(this.uploadedUrls[type], names[type]);
+                } catch (e) {
+                    console.warn(`No se pudo descargar ${type} desde URL, se guardará la URL directa.`, e);
+                }
+            }
+
+            if (file && file instanceof File && file.size > 0) {
+                const storageRef = storage.ref(`manual-review/${submissionId}/${names[type]}`);
+                const metadata = { contentType: 'application/pdf' };
+                try {
+                    await storageRef.put(file, metadata);
                     fileUrls[type] = await storageRef.getDownloadURL();
-                    console.log(`URL obtenida para ${type}:`, fileUrls[type]);
-                    
                 } catch (uploadError) {
                     console.error(`Error subiendo archivo ${type}:`, uploadError);
-                    throw new Error(`Error subiendo ${type}: ${uploadError.message}`);
+                    // fallback a URL si existe
+                    if (this.uploadedUrls[type]) fileUrls[type] = this.uploadedUrls[type];
                 }
-            } else {
-                console.warn(`Archivo ${type} no válido o vacío:`, file);
+            } else if (this.uploadedUrls[type]) {
+                // último recurso: guardar URL existente
+                fileUrls[type] = this.uploadedUrls[type];
             }
         }
-        
+
         if (Object.keys(fileUrls).length === 0) {
             throw new Error('No se pudo subir ningún archivo');
         }
-        
         return fileUrls;
     }
 
     // Guardar en Firestore (colección separada)
     async saveToFirestore(fileUrls) {
-        if (!window.firebaseDB) {
-            throw new Error('Firestore no está disponible');
-        }
-
+        if (!window.firebaseDB) throw new Error('Firestore no está disponible');
         const db = window.firebaseDB;
-        
+
         const submissionData = {
-            // Información básica
             companyName: this.formData.companyName,
             contactName: this.formData.contactName,
             contactPhone: this.formData.contactPhone,
             contactEmail: this.formData.contactEmail,
-            
-            // URLs de archivos
             files: fileUrls,
-            
-            // Metadatos
             submissionType: 'manual-review',
             status: 'pending-manual-review',
             reason: 'documents-validation-failed',
             submissionDate: new Date().toISOString(),
-            
-            // Timestamps de Firebase
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         };
-        
-        // Guardar en colección separada para revisión manual
+
         const docRef = await db.collection('manual-review-suppliers').add(submissionData);
         console.log('Datos guardados en manual-review-suppliers con ID:', docRef.id);
-        
         return docRef.id;
     }
 
-    // Formatear tamaño de archivo
-    formatFileSize(bytes) {
-        if (bytes === 0) return '0 Bytes';
-        
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    }
-
-    // Mostrar loading
-    showLoading() {
-        const overlay = document.getElementById('loading-overlay');
-        if (overlay) {
-            overlay.classList.add('active');
-            document.body.style.overflow = 'hidden';
+    // === UTILIDAD UI ===================================================
+    formatFileSize(bytes){ if(bytes===0) return '0 Bytes'; const k=1024,s=['Bytes','KB','MB','GB']; const i=Math.floor(Math.log(bytes)/Math.log(k)); return parseFloat((bytes/Math.pow(k,i)).toFixed(2))+' '+s[i]; }
+    showLoading(){ const o=document.getElementById('loading-overlay'); if(o){ o.classList.add('active'); document.body.style.overflow='hidden'; } }
+    hideLoading(){ const o=document.getElementById('loading-overlay'); if(o){ o.classList.remove('active'); document.body.style.overflow='auto'; } }
+    showSuccess(){ this.hideLoading(); const o=document.getElementById('success-overlay'); if(o){ o.style.display='flex'; document.body.style.overflow='hidden'; } }
+    showError(message){
+        const d=document.createElement('div'); d.className='error-notification';
+        d.innerHTML=`<div class="notification-content"><i class="fas fa-exclamation-triangle"></i><span>${message}</span><button onclick="this.parentElement.parentElement.remove()"><i class="fas fa-times"></i></button></div>`;
+        if(!document.getElementById('notification-styles')){
+            const s=document.createElement('style'); s.id='notification-styles'; s.textContent=`
+                .error-notification{position:fixed;top:20px;right:20px;background:linear-gradient(135deg,#ef4444 0%,#dc2626 100%);color:white;padding:1rem;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:10000;max-width:400px;animation:slideInRight .3s ease-out}
+                .notification-content{display:flex;align-items:center;gap:.5rem}
+                .notification-content button{background:none;border:none;color:white;cursor:pointer;padding:.25rem;margin-left:auto;border-radius:4px}
+                .notification-content button:hover{background:rgba(255,255,255,.1)}
+                @keyframes slideInRight{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+            `; document.head.appendChild(s);
         }
-    }
-
-    // Ocultar loading
-    hideLoading() {
-        const overlay = document.getElementById('loading-overlay');
-        if (overlay) {
-            overlay.classList.remove('active');
-            document.body.style.overflow = 'auto';
-        }
-    }
-
-    // Mostrar éxito
-    showSuccess() {
-        this.hideLoading();
-        const overlay = document.getElementById('success-overlay');
-        if (overlay) {
-            overlay.style.display = 'flex';
-            document.body.style.overflow = 'hidden';
-        }
-    }
-
-    // Mostrar error
-    showError(message) {
-        // Crear notificación de error
-        const errorDiv = document.createElement('div');
-        errorDiv.className = 'error-notification';
-        errorDiv.innerHTML = `
-            <div class="notification-content">
-                <i class="fas fa-exclamation-triangle"></i>
-                <span>${message}</span>
-                <button onclick="this.parentElement.parentElement.remove()">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-        `;
-
-        // Agregar estilos si no existen
-        if (!document.getElementById('notification-styles')) {
-            const styles = document.createElement('style');
-            styles.id = 'notification-styles';
-            styles.textContent = `
-                .error-notification {
-                    position: fixed;
-                    top: 20px;
-                    right: 20px;
-                    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-                    color: white;
-                    padding: 1rem;
-                    border-radius: 8px;
-                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-                    z-index: 10000;
-                    max-width: 400px;
-                    animation: slideInRight 0.3s ease-out;
-                }
-                .notification-content {
-                    display: flex;
-                    align-items: center;
-                    gap: 0.5rem;
-                }
-                .notification-content button {
-                    background: none;
-                    border: none;
-                    color: white;
-                    cursor: pointer;
-                    padding: 0.25rem;
-                    margin-left: auto;
-                    border-radius: 4px;
-                }
-                .notification-content button:hover {
-                    background: rgba(255, 255, 255, 0.1);
-                }
-                @keyframes slideInRight {
-                    from {
-                        transform: translateX(100%);
-                        opacity: 0;
-                    }
-                    to {
-                        transform: translateX(0);
-                        opacity: 1;
-                    }
-                }
-            `;
-            document.head.appendChild(styles);
-        }
-
-        document.body.appendChild(errorDiv);
-
-        // Auto remover después de 5 segundos
-        setTimeout(() => {
-            if (errorDiv.parentElement) {
-                errorDiv.remove();
-            }
-        }, 5000);
+        document.body.appendChild(d); setTimeout(()=>{d.parentElement && d.remove()},5000);
     }
 }
 
-// Función global para regresar a documentos
-window.goBackToDocuments = function() {
-    // Limpiar datos de sesión
-    try {
+// Navegación
+window.goBackToDocuments = function(){
+    try{
         sessionStorage.removeItem('uploadedFiles');
+        sessionStorage.removeItem('uploadedUrls'); // ⬅️ limpiar también URLs
         sessionStorage.removeItem('extractedCompanyInfo');
         sessionStorage.removeItem('validationSummary');
-        console.log('SessionStorage limpiado');
-    } catch (error) {
-        console.error('Error limpiando sessionStorage:', error);
-    }
-    
-    // Regresar a la página principal
-    console.log('Redirigiendo a index.html...');
+    }catch(e){ console.error('Error limpiando sessionStorage:', e);}
     window.location.href = '../index.html';
 };
+window.regresarADocumentos = function(){ window.goBackToDocuments(); };
 
-// Función alternativa por si el botón usa otro nombre
-window.regresarADocumentos = function() {
-    window.goBackToDocuments();
-};
-
-// Asegurar que la función esté disponible cuando el DOM esté listo
-document.addEventListener('DOMContentLoaded', function() {
-    // Buscar el botón de regresar y asignar la función directamente
-    const backButton = document.querySelector('button[onclick*="regresar"], button[onclick*="back"], #back-btn, .back-btn');
-    if (backButton) {
-        backButton.addEventListener('click', function(e) {
-            e.preventDefault();
-            window.goBackToDocuments();
-        });
-    }
-    
-    // También buscar por texto del botón
-    const buttons = document.querySelectorAll('button');
-    buttons.forEach(button => {
-        if (button.textContent.includes('Regresar') || button.textContent.includes('Documentos')) {
-            button.addEventListener('click', function(e) {
-                e.preventDefault();
-                window.goBackToDocuments();
-            });
-        }
-    });
-});
-
-// Inicializar cuando el DOM esté listo
-document.addEventListener('DOMContentLoaded', function() {
-    // Asegurar que la función goBackToDocuments esté disponible inmediatamente
-    console.log('Configurando función goBackToDocuments...');
-    
-    // Esperar a que Firebase esté listo
+// Inicializar cuando Firebase esté listo
+document.addEventListener('DOMContentLoaded', function(){
     const waitForFirebase = () => {
         if (window.firebase && window.firebaseDB) {
-            console.log('Firebase está listo, inicializando ContactOnlyHandler...');
             window.contactOnlyHandler = new ContactOnlyHandler();
+            // init es async; no hace falta await aquí
             window.contactOnlyHandler.init();
         } else {
-            console.log('Esperando a Firebase...');
             setTimeout(waitForFirebase, 100);
         }
     };
-    
     waitForFirebase();
-    
-    // Configurar el botón de regresar como respaldo
+
+    // Respaldo para el botón Regresar
     setTimeout(() => {
         const backButton = document.querySelector('button[onclick="goBackToDocuments()"]');
         if (backButton) {
-            console.log('Botón de regresar encontrado y configurado');
-            backButton.addEventListener('click', function(e) {
-                e.preventDefault();
-                console.log('Click en botón regresar detectado');
-                window.goBackToDocuments();
+            backButton.addEventListener('click', function(e){
+                e.preventDefault(); window.goBackToDocuments();
             });
         }
     }, 500);
 });
 
-// Exportar para uso global
+// Exportar
 window.ContactOnlyHandler = ContactOnlyHandler;

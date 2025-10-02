@@ -431,7 +431,6 @@ class FormHandler {
         } catch (error) {
             console.error('Error processing file:', error);
             this.showFileError(type, error.message || 'Error al procesar el archivo');
-            this.uploadedFiles[type] = null;
             this.updateUploadAreaAppearance(type, 'error');
 
             const msg = (error && (error.message || error.toString())) || '';

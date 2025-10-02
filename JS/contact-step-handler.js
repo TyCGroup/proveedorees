@@ -13,7 +13,7 @@ class ContactStepHandler {
             nombre: false,
             apellido: false,
             cargo: false,
-            areas: false,
+            areas: true, // CAMBIADO: Ahora es true por defecto (opcional)
             celular: false,
             email: false
         };
@@ -52,7 +52,7 @@ class ContactStepHandler {
             emailInput.addEventListener('blur', this.validateEmailField.bind(this));
         }
 
-        // Checkboxes de áreas
+        // Checkboxes de áreas (OPCIONAL - ya no se valida como requerido)
         const checkboxes = document.querySelectorAll('#areas-responsabilidad input[type="checkbox"]');
         checkboxes.forEach(checkbox => {
             checkbox.addEventListener('change', this.handleAreaSelection.bind(this));
@@ -117,13 +117,14 @@ class ContactStepHandler {
         this.updateContactData('email', value);
     }
 
-    // Manejar selección de áreas
+    // Manejar selección de áreas (OPCIONAL)
     handleAreaSelection(event) {
         const checkedAreas = Array.from(document.querySelectorAll('#areas-responsabilidad input[type="checkbox"]:checked'))
             .map(checkbox => checkbox.value);
         
         this.updateContactData('areas', checkedAreas);
-        this.validateAreasField();
+        // Ya no se valida porque es opcional
+        this.checkOverallContactValidation();
     }
 
     // Actualizar datos de contacto
@@ -220,23 +221,7 @@ class ContactStepHandler {
         this.checkOverallContactValidation();
     }
 
-    // Validar campo de áreas
-    validateAreasField() {
-        const selectedAreas = this.contactData.areas;
-        let isValid = false;
-        let message = '';
-
-        if (!selectedAreas || selectedAreas.length === 0) {
-            message = 'Debe seleccionar al menos un área de responsabilidad';
-        } else {
-            isValid = true;
-            message = '';
-        }
-
-        this.validationStatus.areas = isValid;
-        this.showAreasValidation(isValid, message);
-        this.checkOverallContactValidation();
-    }
+    // REMOVIDO: validateAreasField ya no es necesario porque es opcional
 
     // Mostrar validación de campo individual
     showFieldValidation(input, isValid, message) {
@@ -264,24 +249,11 @@ class ContactStepHandler {
         }
     }
 
-    // Mostrar validación de áreas
-    showAreasValidation(isValid, message) {
-        const validationElement = document.getElementById('areas-validation');
-        
-        if (validationElement) {
-            if (message && !isValid) {
-                validationElement.className = 'validation-message error';
-                validationElement.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${message}`;
-                validationElement.style.display = 'block';
-            } else {
-                validationElement.style.display = 'none';
-            }
-        }
-    }
-
     // Verificar validación general del formulario de contacto
     checkOverallContactValidation() {
-        const allFieldsValid = Object.values(this.validationStatus).every(status => status === true);
+        // Solo validar campos obligatorios (sin áreas)
+        const requiredFields = ['nombre', 'apellido', 'cargo', 'celular', 'email'];
+        const allFieldsValid = requiredFields.every(field => this.validationStatus[field] === true);
         
         this.isValid = allFieldsValid;
         
@@ -321,7 +293,7 @@ class ContactStepHandler {
     resetContactValidation() {
         // Resetear estado de validación
         Object.keys(this.validationStatus).forEach(key => {
-            this.validationStatus[key] = false;
+            this.validationStatus[key] = key === 'areas' ? true : false; // áreas siempre válido
         });
 
         // Limpiar mensajes de error
@@ -385,8 +357,7 @@ class ContactStepHandler {
             this.validateEmailField({ target: emailInput });
         }
 
-        // Validar áreas
-        this.validateAreasField();
+        // Ya no validamos áreas porque es opcional
 
         return this.isValid;
     }

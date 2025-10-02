@@ -451,7 +451,7 @@ function generateAdminEmailTemplate(data) {
   `;
 }
 
-// Template para confirmación al proveedor
+// Template para confirmación al proveedor (ACTUALIZADO)
 function generateSupplierConfirmationTemplate(data) {
   return `
     <!DOCTYPE html>
@@ -496,6 +496,22 @@ function generateSupplierConfirmationTemplate(data) {
           border-radius: 6px; 
           border-left: 4px solid #10b981;
           margin: 20px 0;
+        }
+        .validation-notice {
+          background: #eff6ff;
+          border: 1px solid #3b82f6;
+          border-left: 4px solid #3b82f6;
+          padding: 15px;
+          border-radius: 6px;
+          margin: 20px 0;
+        }
+        .validation-notice strong {
+          color: #1e40af;
+        }
+        .validation-notice p {
+          margin: 8px 0 0 0;
+          color: #1e3a8a;
+          font-size: 14px;
         }
         .steps { 
           background: #f8fafc; 
@@ -546,6 +562,11 @@ function generateSupplierConfirmationTemplate(data) {
           <div class="highlight">
             <p><strong>Gracias por su interés en formar parte de nuestra red de proveedores</strong></p>
             <p>Confirmamos que hemos recibido correctamente su solicitud de pre-registro como proveedor de T&C Group el día <strong>${data.registrationDate}</strong>.</p>
+          </div>
+          
+          <div class="validation-notice">
+            <strong>📋 Validación de Documentos</strong>
+            <p>Los documentos han sido validados al día de hoy <strong>(${data.registrationDate})</strong>, no obstante están sujetos a la aprobación de las autoridades competentes.</p>
           </div>
           
           <div class="reference-box">
