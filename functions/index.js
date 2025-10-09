@@ -591,7 +591,7 @@ function generateSupplierConfirmationTemplate(data) {
           <p><strong>Información importante:</strong></p>
           <ul>
             <li>Conserve este correo como comprobante de su solicitud</li>
-            <li>Si necesita actualizar algún dato, contacte a nuestro equipo citando su número de referencia</li>
+            <li>Si necesita actualizar algún dato, contacte a nuestro equipo citando su nombre de empresa</li>
             <li>Recibirá notificaciones sobre el avance del proceso en este correo</li>
             <li>Todas las comunicaciones oficiales se enviarán a este email</li>
           </ul>
@@ -599,7 +599,7 @@ function generateSupplierConfirmationTemplate(data) {
           <div class="contact-info">
             <h4>¿Necesita ayuda o tiene preguntas?</h4>
             <p>Email: <a href="mailto:compras@tycgroup.com">compras@tycgroup.com</a></p>
-            <p><strong>Importante:</strong> Al contactarnos, mencione siempre su número de referencia</p>
+            <p><strong>Importante:</strong> Al contactarnos, mencione siempre su nombre de empresa</p>
           </div>
           
           <p>Valoramos su interés en colaborar con T&C Group y esperamos establecer una relación comercial exitosa y duradera.</p>
@@ -1126,7 +1126,6 @@ function generateManualReviewAdminTemplate(data) {
           <p><strong>ID de Solicitud:</strong> ${data.supplierId}</p>
           <p><strong>Colección:</strong> manual-review-suppliers</p>
           <p>Sistema de Revisión Manual - T&C Group</p>
-          <p><em>Este mensaje fue enviado automáticamente desde respaldos@tycgroup.com</em></p>
         </div>
       </div>
     </body>
@@ -1340,7 +1339,7 @@ function generateManualReviewSupplierTemplate(data) {
           <div class="contact-info">
             <h4>¿Necesita información adicional?</h4>
             <p>Email: <a href="mailto:compras@tycgroup.com">compras@tycgroup.com</a></p>
-            <p><strong>Importante:</strong> Al contactarnos, mencione siempre su número de referencia</p>
+            <p><strong>Importante:</strong> Al contactarnos, mencione siempre su nombre de empresa.</p>
           </div>
           
           <p>Agradecemos su paciencia durante este proceso de revisión. Nuestro equipo trabajará diligentemente para procesar su solicitud en el menor tiempo posible.</p>
