@@ -1409,28 +1409,42 @@ function parseOpinionText(text) {
 
 function parseCSFText(text) {
   const getAfter = (label) => {
-    const re = new RegExp(`${label}\\s*:?\\s*([\\s\\S]*?)\\s*(?=[A-ZÁÉÍÓÚÑ].{0,40}:|$)`, "i");
+    // 🔹 Mejorado: captura todo hasta el próximo label, incluyendo múltiples líneas
+    const re = new RegExp(`${label}\\s*:?\\s*([\\s\\S]*?)(?=(?:Régimen|Regimen|Fecha|Situación|Situacion|Entidad|Municipio|Datos de|AL:|Características|$))`, "i");
     const m = text.match(re);
-    return m ? norm(m[1]) : "";
+    if (!m) return "";
+    
+    // Limpiar el resultado
+    let result = norm(m[1]);
+    
+    // Quitar etiquetas que no son parte del valor
+    result = result
+      .replace(/^(?:Denominación|Razón\s+Social|Nombre)\s*:?\s*/i, '')
+      .replace(/\s*(?:Régimen|Regimen|Fecha|Situación|Situacion|Datos).*$/i, '');
+    
+    return result.trim();
   };
-  const razon_social     = getAfter("Denominación o Razón Social") || getAfter("Denominación / Razón Social") || getAfter("Razón social") || "";
-  const regimen_capital  = getAfter("Régimen de capital");
-  const fecha_const      = getAfter("Fecha de constitución");
-  const inicio_op        = getAfter("Fecha de Inicio de operaciones");
-  const situacion        = getAfter("Situación del contribuyente");
+  
+  const razon_social = getAfter("Denominación o Razón Social") || 
+                       getAfter("Denominación / Razón Social") || 
+                       getAfter("Razón social") || "";
+  const regimen_capital = getAfter("Régimen de capital");
+  const fecha_const = getAfter("Fecha de constitución");
+  const inicio_op = getAfter("Fecha de Inicio de operaciones");
+  const situacion = getAfter("Situación del contribuyente");
   const fecha_ult_cambio = getAfter("Fecha del último cambio de situación");
-  const entidad          = getAfter("Entidad Federativa");
-  const municipio        = getAfter("Municipio o delegación") || getAfter("Municipio o Delegación");
-  const colonia          = getAfter("Colonia");
-  const tipo_vialidad    = getAfter("Tipo de vialidad");
-  const vialidad_nombre  = getAfter("Nombre de la vialidad");
-  const numero_ext       = getAfter("Número exterior");
-  const numero_int       = getAfter("Número interior");
-  const cp               = getAfter("CP") || getAfter("C.P.");
-  const correo           = getAfter("Correo electrónico") || getAfter("Correo electronico");
-  const regimen          = getAfter("Régimen") || getAfter("Regimen");
-  const fecha_alta       = getAfter("Fecha de alta");
-  const rfcLine          = getAfter("El RFC:");
+  const entidad = getAfter("Entidad Federativa");
+  const municipio = getAfter("Municipio o delegación") || getAfter("Municipio o Delegación");
+  const colonia = getAfter("Colonia");
+  const tipo_vialidad = getAfter("Tipo de vialidad");
+  const vialidad_nombre = getAfter("Nombre de la vialidad");
+  const numero_ext = getAfter("Número exterior");
+  const numero_int = getAfter("Número interior");
+  const cp = getAfter("CP") || getAfter("C.P.");
+  const correo = getAfter("Correo electrónico") || getAfter("Correo electronico");
+  const regimen = getAfter("Régimen") || getAfter("Regimen");
+  const fecha_alta = getAfter("Fecha de alta");
+  const rfcLine = getAfter("El RFC:");
 
   const domicilio_completo = norm([
     tipo_vialidad, vialidad_nombre, numero_ext,
@@ -1447,10 +1461,17 @@ function parseCSFText(text) {
     inicio_operaciones: inicio_op,
     situacion,
     fecha_ultimo_cambio: fecha_ult_cambio,
-    entidad, municipio, colonia,
-    tipo_vialidad, vialidad_nombre,
-    numero_exterior: numero_ext, numero_interior: numero_int,
-    cp, correo, regimen, fecha_alta,
+    entidad, 
+    municipio, 
+    colonia,
+    tipo_vialidad, 
+    vialidad_nombre,
+    numero_exterior: numero_ext, 
+    numero_interior: numero_int,
+    cp, 
+    correo, 
+    regimen, 
+    fecha_alta,
     domicilio_completo,
   };
 }
@@ -1512,7 +1533,7 @@ async function fetchAndParseOne(url) {
   });
 
   const $ = cheerio.load(html);
-  $('script,style,noscript').remove();        // <— evita “PrimeFaces.cw(…)”
+  $('script,style,noscript').remove();
   const text = norm($("body").text());
 
   const parsed = parseByD1(url, text);
@@ -1526,7 +1547,24 @@ async function fetchAndParseOne(url) {
     if (fast.sentido && !parsed.sentido) parsed.sentido = fast.sentido;
   }
 
-  return { url, fields: { ...parsed, blob: text, html } };
+  // 🔍 DEBUG: Ver qué se está devolviendo
+  console.log("=== fetchAndParseOne DEBUG ===");
+  console.log("URL:", url);
+  console.log("Text length:", text ? text.length : 0);
+  console.log("HTML length:", html ? html.length : 0);
+  console.log("Parsed keys:", Object.keys(parsed));
+  console.log("Parsed.blob exists:", !!parsed.blob);
+  console.log("==============================");
+
+  // ✅ ASEGURAR que blob siempre existe
+  return { 
+    url, 
+    fields: { 
+      ...parsed, 
+      blob: text || "",      // ← Texto limpio SIEMPRE
+      html: html || ""       // ← HTML original SIEMPRE
+    } 
+  };
 }
 
 async function isRfcIn69B(rfc) {
@@ -1638,24 +1676,51 @@ exports.satExtract = onRequest(async (req, res) => {
       });
     }
 
-    // ======================
-    // MODO SINGLE (una sola URL del SAT)
-    // ======================
-    if (!url) {
-      return res.status(400).json({ ok: false, error: "Falta 'url'." });
-    }
-    if (!isOfficialSatUrl(url)) {
-      return res.status(400).json({ ok: false, error: "URL no permitida (debe ser oficial del SAT)." });
-    }
+// ======================
+// MODO SINGLE (una sola URL del SAT)
+// ======================
+if (!url) {
+  return res.status(400).json({ ok: false, error: "Falta url." });
+}
+if (!isOfficialSatUrl(url)) {
+  return res.status(400).json({ ok: false, error: "URL no permitida (debe ser oficial del SAT)." });
+}
 
-    const result = await fetchAndParseOne(url);
-    return res.json({ ok: true, mode: "single", ...result });
+const single = await fetchAndParseOne(url);
 
-  } catch (error) {
-    console.error("satExtract error:", error);
-    return res.status(500).json({ ok: false, error: error.message || "Error interno" });
+// 🔍 DEBUG: Ver qué estamos a punto de devolver
+console.log("=== RESPONSE DEBUG ===");
+console.log("single.url:", single.url);
+console.log("single.fields keys:", Object.keys(single.fields));
+console.log("single.fields.blob exists:", !!single.fields.blob);
+console.log("single.fields.blob length:", single.fields.blob ? single.fields.blob.length : 0);
+console.log("single.fields.html length:", single.fields.html ? single.fields.html.length : 0);
+console.log("======================");
+
+// ✅ CRÍTICO: Asegurar que el blob siempre se devuelve
+const responseData = {
+  ok: true,
+  mode: "single",
+  url: single.url,
+  fields: {
+    ...single.fields,
+    blob: single.fields.blob || single.fields.html || "",
+    html: single.fields.html || ""
   }
-});
+};
+
+console.log("=== FINAL RESPONSE ===");
+console.log("responseData.fields.blob length:", responseData.fields.blob ? responseData.fields.blob.length : 0);
+console.log("responseData.fields.html length:", responseData.fields.html ? responseData.fields.html.length : 0);
+console.log("======================");
+
+return res.json(responseData);
+
+} catch (error) {
+  console.error("satExtract error:", error);
+  return res.status(500).json({ ok: false, error: error.message || "Error interno" });
+}
+}); // <-- cierre de exports.satExtract = onRequest(...)
 
 // ====== SAT 69-B: REPLACE COMPLETO (borra colección y reescribe con últimos RFC) ======
 
@@ -1763,3 +1828,128 @@ exports.replaceSat69BMonthly = onSchedule(
   }
 );
 
+// =========================================================
+//  OCR BANCARIO (Document AI)
+// =========================================================
+const { DocumentProcessorServiceClient } = require("@google-cloud/documentai");
+
+exports.bankOcr = onRequest(
+  {
+    memory: "1GiB",
+    timeoutSeconds: 120,
+    secrets: ["DOC_AI_PROJECT_ID", "DOC_AI_LOCATION", "DOC_AI_PROCESSOR_ID"]
+  },
+  async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") return res.status(204).send("");
+
+    try {
+      // 🔐 Extraer y validar variables
+      const projectId = process.env.DOC_AI_PROJECT_ID;
+      const location = process.env.DOC_AI_LOCATION;
+      const processorId = process.env.DOC_AI_PROCESSOR_ID;
+
+      // 🔍 Log para debugging
+      console.log("=== Document AI Config ===");
+      console.log("PROJECT_ID:", projectId);
+      console.log("LOCATION:", location);
+      console.log("PROCESSOR_ID:", processorId);
+
+      if (!projectId || !location || !processorId) {
+        throw new Error("Faltan variables de entorno para Document AI");
+      }
+
+      const { dataBase64, contentType } = req.body || {};
+      if (!dataBase64) throw new Error("Falta dataBase64 en el cuerpo");
+
+      // 🔹 Limpiar Base64 (quitar prefijo si existe)
+      const cleanBase64 = dataBase64.replace(/^data:[^;]+;base64,/, '');
+      
+      console.log("Base64 length:", cleanBase64.length);
+      console.log("Content type:", contentType || "application/pdf");
+
+      // 📄 Configurar cliente
+      const client = new DocumentProcessorServiceClient({
+        projectId: projectId
+      });
+
+      // ✅ Construir nombre del recurso correctamente
+      const name = `projects/${projectId}/locations/${location}/processors/${processorId}`;
+      
+      console.log("Resource name:", name);
+
+      // ⚠️ CAMBIO CRÍTICO: Usar rawDocument en lugar de document
+      const request = {
+        name: name,
+        rawDocument: {  // <-- ESTO ES LO QUE ESTABA MAL
+          content: cleanBase64,
+          mimeType: contentType || "application/pdf"
+        }
+      };
+
+      console.log("Sending request to Document AI...");
+
+      // 🧠 Procesar documento
+      const [result] = await client.processDocument(request);
+
+      if (!result || !result.document) {
+        throw new Error("Document AI no devolvió resultado válido");
+      }
+
+      const doc = result.document;
+      const text = doc.text || "";
+
+      console.log("✅ Document processed successfully");
+      console.log("Text length:", text.length);
+
+      // 🏦 Extracción de datos
+      const cuenta = detectAccount(text) || "";
+      const clabe = detectClabe(text) || "";
+      const banco = detectBank(text) || "";
+
+      console.log("Extracted data:");
+      console.log("- Cuenta:", cuenta);
+      console.log("- CLABE:", clabe);
+      console.log("- Banco:", banco);
+
+      return res.json({
+        ok: true,
+        text,
+        quick: { cuenta, clabe, banco },
+        pages: (doc.pages && doc.pages.length) ? doc.pages.length : 0,
+      });
+
+    } catch (err) {
+      console.error("❌ bankOcr error:", err);
+      console.error("Error message:", err.message);
+      console.error("Error stack:", err.stack);
+      
+      res.status(500).json({
+        ok: false,
+        error: err.message || "Error interno en bankOcr",
+        details: err.stack
+      });
+    }
+  }
+);
+
+// --- Detectores simples ---
+function detectAccount(text = "") {
+  const m = text.match(/\b\d{8,12}\b/);
+  return m ? m[0] : null;
+}
+function detectClabe(text = "") {
+  const m = text.match(/\b\d{18}\b/);
+  return m ? m[0] : null;
+}
+function detectBank(text = "") {
+  const banks = [
+    "BBVA","BANAMEX","SANTANDER","BANORTE","HSBC","SCOTIABANK",
+    "INBURSA","BAJIO","AFIRME","MIFEL","BANREGIO","BANCOPPEL",
+    "AZTECA","COMPARTAMOS","ACTINVER","MONEX","MULTIVA"
+  ];
+  for (const b of banks)
+    if (new RegExp(`\\b${b}\\b`, "i").test(text)) return b;
+  return null;
+}

@@ -513,12 +513,30 @@ class FormHandler {
 
     validateBancarioDocument(data) {
         const errors = [];
-        if (!data.companyName) errors.push('No se pudo extraer el nombre de la empresa');
+        
+        // 🔹 Para Document AI, NO validamos companyName aquí
+        // Solo verificamos que tenga datos bancarios
+        if (!data.cuenta && !data.clabe && !data.banco) {
+            errors.push('No se pudieron extraer datos bancarios del documento');
+        }
+        
+        // Si tiene datos, es válido
         if (errors.length > 0) {
             this.showValidationStatus('bancario', 'error', errors.join('. '));
             this.validationStatus.bancario = false;
         } else {
-            this.showValidationStatus('bancario', 'success', 'Documento válido');
+            // Mensaje más descriptivo según lo que se extrajo
+            let message = 'Documento bancario procesado';
+            if (data.ocrOk) {
+                const extracted = [];
+                if (data.cuenta) extracted.push('cuenta');
+                if (data.clabe) extracted.push('CLABE');
+                if (data.banco) extracted.push('banco');
+                if (extracted.length > 0) {
+                    message += ` (detectado: ${extracted.join(', ')})`;
+                }
+            }
+            this.showValidationStatus('bancario', 'success', message);
             this.validationStatus.bancario = true;
         }
     }

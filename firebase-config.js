@@ -17,6 +17,7 @@ const isDevelopment = window.location.hostname.includes('localhost') ||
 
 // URLs específicas por entorno
 window.satFunctionURL = 'https://us-central1-compras-tyc.cloudfunctions.net/satExtract';
+window.bankOcrURL = 'https://bankocr-p6inib5eya-uc.a.run.app';
 
 // Configuración específica del entorno
 window.ENV_CONFIG = {
